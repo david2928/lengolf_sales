@@ -32,8 +32,8 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy requirements first for better caching
-COPY app/requirenments.txt .
-RUN pip install -r requirenments.txt
+COPY app/requirements.txt .
+RUN pip install -r requirements.txt
 
 # Install Playwright browsers
 RUN playwright install chromium
