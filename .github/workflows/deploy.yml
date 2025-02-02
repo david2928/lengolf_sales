@@ -48,10 +48,30 @@ jobs:
 
     - name: Deploy to Cloud Run
       run: |
+        gcloud run jobs create ${{ env.SERVICE }} \
+          --image "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/app:${{ github.sha }}" \
+          --region ${{ env.REGION }} \
+          --max-retries 3 \
+          --task-timeout "3600s" \
+          --set-env-vars "APP_LOGIN=${{ secrets.APP_LOGIN }},APP_PASSWORD=${{ secrets.APP_PASSWORD }},GOOGLE_KEY=${{ secrets.GOOGLE_KEY }}" || \
         gcloud run jobs update ${{ env.SERVICE }} \
           --image "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/app:${{ github.sha }}" \
           --region ${{ env.REGION }} \
-          --schedule "0 10-23 * * *" \
           --max-retries 3 \
           --task-timeout "3600s" \
-          --set-env-vars "APP_LOGIN=${{ secrets.APP_LOGIN }},APP_PASSWORD=${{ secrets.APP_PASSWORD }},GOOGLE_KEY=${{ secrets.GOOGLE_KEY }}" 
+          --set-env-vars "APP_LOGIN=${{ secrets.APP_LOGIN }},APP_PASSWORD=${{ secrets.APP_PASSWORD }},GOOGLE_KEY=${{ secrets.GOOGLE_KEY }}"
+
+    - name: Set up Cloud Scheduler
+      run: |
+        gcloud scheduler jobs create http ${{ env.SERVICE }}-scheduler \
+          --location ${{ env.REGION }} \
+          --schedule "0 10-23 * * *" \
+          --http-method POST \
+          --uri "https://${{ env.REGION }}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${{ env.PROJECT_ID }}/jobs/${{ env.SERVICE }}:run" \
+          --oauth-service-account-email "${{ secrets.WIF_SERVICE_ACCOUNT }}" || \
+        gcloud scheduler jobs update http ${{ env.SERVICE }}-scheduler \
+          --location ${{ env.REGION }} \
+          --schedule "0 10-23 * * *" \
+          --http-method POST \
+          --uri "https://${{ env.REGION }}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${{ env.PROJECT_ID }}/jobs/${{ env.SERVICE }}:run" \
+          --oauth-service-account-email "${{ secrets.WIF_SERVICE_ACCOUNT }}" 
