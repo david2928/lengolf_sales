@@ -11,7 +11,7 @@ import gspread
 import openpyxl
 import csv
 import json
-from settings import *
+from app.settings import *
 
 # Define the Google Sheets ID
 SPREADSHEET_ID = '1ECYWdaDaM7dFAuQVEBFnba93WGuNMA5mqczawIIMB98'
