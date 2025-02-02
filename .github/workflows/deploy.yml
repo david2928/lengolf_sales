@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  PROJECT_ID: noted-app-295904
+  PROJECT_ID: lengolf-operations
   REGION: asia-southeast1
 
 jobs:
