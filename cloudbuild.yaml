@@ -1,0 +1,47 @@
+steps:
+  # Build the container image with secrets
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/lengolf-sales/app:$COMMIT_SHA'
+      - '--build-arg'
+      - 'APP_LOGIN=${_APP_LOGIN}'
+      - '--build-arg'
+      - 'APP_PASSWORD=${_APP_PASSWORD}'
+      - '--build-arg'
+      - 'GOOGLE_KEY=${_GOOGLE_KEY}'
+      - '.'
+
+  # Push the container image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/lengolf-sales/app:$COMMIT_SHA']
+
+  # Deploy to Cloud Run jobs
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'jobs'
+      - 'update'
+      - 'lengolf-sales'
+      - '--image'
+      - 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/lengolf-sales/app:$COMMIT_SHA'
+      - '--region'
+      - 'asia-southeast1'
+      - '--schedule'
+      - '0 10-23 * * *'
+      - '--max-retries'
+      - '3'
+      - '--task-timeout'
+      - '3600s'  # 1 hour timeout
+      - '--set-env-vars'
+      - 'APP_LOGIN=${_APP_LOGIN},APP_PASSWORD=${_APP_PASSWORD},GOOGLE_KEY=${_GOOGLE_KEY}'
+
+images:
+  - 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/lengolf-sales/app:$COMMIT_SHA'
+
+substitutions:
+  _APP_LOGIN: ''
+  _APP_PASSWORD: ''
+  _GOOGLE_KEY: '' 

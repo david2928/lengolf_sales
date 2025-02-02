@@ -11,7 +11,8 @@ import gspread
 import openpyxl
 import csv
 import json
-from settings import *
+from app.settings import *
+import re
 
 # Define the Google Sheets ID
 SPREADSHEET_ID = '1ECYWdaDaM7dFAuQVEBFnba93WGuNMA5mqczawIIMB98'
@@ -80,33 +81,32 @@ def convert_file_to_sheets_data(file_path):
 
     raise UnicodeDecodeError(f"None of the specified encodings worked for the file: {file_path}")
 
-
 def push_to_google_sheets(df_data):
     try:
         # set up credentials
         credentials = service_account.Credentials.from_service_account_file(PATH_TO_GOOGLE_KEY)
 
-        # get current month in format YYYY_MM
-        current_month = datetime.now().strftime('%Y_%m')
+        # Use fixed month format YYYY_MM for January 2025
+        sheet_name = "2025_01"
 
         # set up gspread lib
         gc = gspread.service_account(filename=PATH_TO_GOOGLE_KEY)
 
         # open the Google Sheet
-        sheet = gc.open_by_key("1ECYWdaDaM7dFAuQVEBFnba93WGuNMA5mqczawIIMB98")
+        sheet = gc.open_by_key(SPREADSHEET_ID)
 
         # check if the worksheet exists, if not create it
         try:
-            worksheet = sheet.worksheet(current_month)
+            worksheet = sheet.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
-            worksheet = sheet.add_worksheet(title=current_month, rows="100", cols="20")
+            worksheet = sheet.add_worksheet(title=sheet_name, rows="100", cols="20")
 
         # clear the worksheet before updating
         worksheet.clear()
 
         # update the worksheet with the dataframe
         worksheet.update([df_data.columns.values.tolist()] + df_data.values.tolist())
-        print(f"Worksheet '{current_month}' updated successfully")
+        print(f"Worksheet '{sheet_name}' updated successfully")
 
     except HttpError as error:
         print(f"An error occurred with the Google Sheets API: {error}")
@@ -114,7 +114,6 @@ def push_to_google_sheets(df_data):
         print(f"Value error: {ve}")
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
-
 
 def get_file():
     print("Getting files from CMS")
@@ -127,7 +126,8 @@ def get_file():
             print(f"URL_CUST_MAGEMENT = {URL_CUST_MAGEMENT}")
             print(f"SCREENSHOT_FOLDER = {SCREENSHOT_FOLDER}")
 
-        browser = p.chromium.launch(headless=True)  # Set headless to False
+        # Launch browser in visible mode for debugging
+        browser = p.chromium.launch(headless=False)
         page = browser.new_page()
         print(f"Opening main page: {URL}")
         page.goto(URL)
@@ -143,45 +143,38 @@ def get_file():
         print(f"Pressing LOGIN...")
 
         screenshot(filename="LoginPageAfter.png", page=page)
-        page.locator('button:has-text("Login")').click()
+        page.get_by_role("button", name="Login").click()
         print(f"Pressed LOGIN")
 
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(3000)  # Increased timeout
         page.wait_for_load_state()
         print(f"Login finished")
 
         # Go to transactions page
-        transactions_url = "https://hq.qashier.com/#/transactions"
-        print(f"Opening transactions page: {transactions_url}")
-        page.goto(transactions_url)
-
-        page.wait_for_timeout(2000)
+        print(f"Opening transactions page")
+        page.locator("a").filter(has_text=re.compile(r"^Transactions$")).click()
+        page.wait_for_timeout(3000)  # Increased timeout
         page.wait_for_load_state()
 
         screenshot(filename="TransactionsPage.png", page=page)
         print(f"Opened transactions page")
 
-        # Get the current day and the previous day
-        current_date = datetime.today()
-        current_day_text = current_date.strftime('%A %d/%m/')
-        current_month_text = current_date.strftime('%B')
-        current_day = str(current_date.day)
+        # Fixed date selection for 31/1/2025
+        print("Clicking date range")
+        page.get_by_role("button", name="Sunday 02/02/").click()
+        page.wait_for_timeout(2000)
 
-        print(f"Current day: {current_day_text}")
-        print(f"Current month: {current_month_text}")
-        print(f"Current day: {current_day}")
+        # Navigate to January
+        print("Clicking left chevron to go to January")
+        page.locator("button").filter(has_text="chevron_left").nth(1).click()
+        page.wait_for_timeout(2000)
 
-        # Select the current day of the month
-        print(f"Clicking current day: {current_day_text}")
-        page.get_by_role("button", name=current_day_text).click()
-
-        # Select the first day of the current month
-        print(f"Clicking first day: 1")
+        # Select date range
+        print("Selecting date range")
         page.get_by_role("button", name="1", exact=True).click()
-
-        # Select today's date
-        print(f"Clicking current day: {current_day}")
-        page.get_by_role("button", name=current_day, exact=True).click()
+        page.wait_for_timeout(1000)
+        page.get_by_role("button", name="31").click()
+        page.wait_for_timeout(1000)
 
         screenshot(filename="DateRangeSelected.png", page=page)
         print("Date range selected")
@@ -189,7 +182,7 @@ def get_file():
         # Click OK to confirm the date range
         print("Clicking OK to confirm date range")
         page.get_by_role("button", name="OK").click()
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(3000)
         page.wait_for_load_state()
 
         screenshot(filename="DateRangeConfirmed.png", page=page)
@@ -197,7 +190,7 @@ def get_file():
 
         # Click the EXPORT dropdown button
         print("Clicking EXPORT dropdown")
-        page.locator('button:has-text("Export") i.material-icons:has-text("cloud_download")').click()
+        page.get_by_label('Expand "Export "').click()
         page.wait_for_timeout(2000)
 
         screenshot(filename="ExportDropdownClicked.png", page=page)
@@ -205,7 +198,7 @@ def get_file():
 
         # Click TRANSACTION DETAILS option
         print("Clicking TRANSACTION DETAILS")
-        page.locator('div.q-item__section:has-text("TRANSACTION DETAILS")').click()
+        page.get_by_text("Transaction Details").click()
         page.wait_for_timeout(2000)
 
         screenshot(filename="TransactionDetailsClicked.png", page=page)
@@ -214,11 +207,12 @@ def get_file():
         # Click CONFIRM in the confirmation dialog
         print("Clicking CONFIRM in dialog")
         with page.expect_download() as download_info:
-            page.get_by_role("button", name="CONFIRM").click()
+            page.get_by_role("button", name="Confirm").click()
             print("Confirm clicked, waiting for download")
             download = download_info.value
 
         # Save the downloaded file
+        date_folder = "2025_01"  # For January 2025
         download_path = os.path.join(DOWNLOAD_FOLDER, download.suggested_filename)
         download.save_as(download_path)
         print(f"File downloaded to {download_path}")
@@ -227,11 +221,16 @@ def get_file():
         csv_path = os.path.splitext(download_path)[0] + ".csv"
         convert_xlsx_to_csv(download_path, csv_path)
 
-        # Copy the CSV file to a permanent location
-        permanent_location = os.path.join(os.path.expanduser("~"), "Documents")
+        # Copy the CSV file to a permanent location with date-based folder
+        permanent_location = os.path.join(os.path.expanduser("~"), "Documents", date_folder)
         os.makedirs(permanent_location, exist_ok=True)
         shutil.copy(csv_path, permanent_location)
         print(f"File copied to {permanent_location}")
+
+        # Clean up temporary files
+        os.remove(download_path)  # Remove Excel file
+        os.remove(csv_path)      # Remove CSV file
+        print("Temporary files cleaned up")
 
         browser.close()
 
@@ -247,4 +246,4 @@ def main():
     print("APP END")
 
 if __name__ == "__main__":
-    main()
+    main() 

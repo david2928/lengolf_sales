@@ -1,0 +1,40 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: noted-app-295904
+  REGION: asia-southeast1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - id: 'auth'
+      name: 'Authenticate to Google Cloud'
+      uses: 'google-github-actions/auth@v1'
+      with:
+        workload_identity_provider: '${{ secrets.WIF_PROVIDER }}'
+        service_account: '${{ secrets.WIF_SERVICE_ACCOUNT }}'
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+
+    - name: Authorize Docker push
+      run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+    - name: Build and Deploy
+      run: |
+        gcloud builds submit \
+          --region=${{ env.REGION }} \
+          --substitutions=_APP_LOGIN='${{ secrets.APP_LOGIN }}',_APP_PASSWORD='${{ secrets.APP_PASSWORD }}',_GOOGLE_KEY='${{ secrets.GOOGLE_KEY }}' 
