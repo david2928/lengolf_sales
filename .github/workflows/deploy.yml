@@ -53,12 +53,14 @@ jobs:
           --region ${{ env.REGION }} \
           --max-retries 3 \
           --task-timeout "3600s" \
+          --service-account "${{ secrets.WIF_SERVICE_ACCOUNT }}" \
           --set-env-vars "APP_LOGIN=${{ secrets.APP_LOGIN }},APP_PASSWORD=${{ secrets.APP_PASSWORD }},GOOGLE_KEY=${{ secrets.GOOGLE_KEY }}" || \
         gcloud run jobs update ${{ env.SERVICE }} \
           --image "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/app:${{ github.sha }}" \
           --region ${{ env.REGION }} \
           --max-retries 3 \
           --task-timeout "3600s" \
+          --service-account "${{ secrets.WIF_SERVICE_ACCOUNT }}" \
           --set-env-vars "APP_LOGIN=${{ secrets.APP_LOGIN }},APP_PASSWORD=${{ secrets.APP_PASSWORD }},GOOGLE_KEY=${{ secrets.GOOGLE_KEY }}"
 
     - name: Set up Cloud Scheduler
