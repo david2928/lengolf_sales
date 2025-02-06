@@ -64,16 +64,30 @@ def convert_file_to_sheets_data(file_path):
                 print("Original dates before processing:")
                 print(df_data_cleaned['Date'].head())
                 
-                # Parse dates and format them consistently
+                # Parse dates and convert to Bangkok time
                 def parse_and_format_date(date_str):
                     try:
                         # Parse with explicit format DD/MM/YYYY HH:MM:SS
                         dt = pd.to_datetime(date_str, format='%d/%m/%Y %H:%M:%S')
-                        # Keep the same format
-                        return dt.strftime('%d/%m/%Y %H:%M:%S')
+                        # Convert to Bangkok time
+                        bangkok_dt = dt.tz_localize('UTC').tz_convert('Asia/Bangkok')
+                        # Add 7 hours to correct the time
+                        bangkok_dt = bangkok_dt + pd.Timedelta(hours=7)
+                        # Format back to string
+                        return bangkok_dt.strftime('%d/%m/%Y %H:%M:%S')
                     except:
-                        print(f"Warning: Could not parse date: {date_str}")
-                        return date_str
+                        try:
+                            # If first format fails, try parsing without format
+                            dt = pd.to_datetime(date_str)
+                            # Convert to Bangkok time
+                            bangkok_dt = dt.tz_localize('UTC').tz_convert('Asia/Bangkok')
+                            # Add 7 hours to correct the time
+                            bangkok_dt = bangkok_dt + pd.Timedelta(hours=7)
+                            # Format back to string
+                            return bangkok_dt.strftime('%d/%m/%Y %H:%M:%S')
+                        except:
+                            print(f"Warning: Could not parse date: {date_str}")
+                            return date_str
                 
                 df_data_cleaned['Date'] = df_data_cleaned['Date'].apply(parse_and_format_date)
                 
