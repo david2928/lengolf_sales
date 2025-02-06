@@ -11,11 +11,18 @@ import gspread
 import openpyxl
 import csv
 import json
-from app.settings import *
+from .settings import *
 import re
+from zoneinfo import ZoneInfo
 
 # Define the Google Sheets ID
 SPREADSHEET_ID = '1ECYWdaDaM7dFAuQVEBFnba93WGuNMA5mqczawIIMB98'
+
+# Set timezone to Bangkok
+TIMEZONE = ZoneInfo("Asia/Bangkok")
+
+def get_current_time():
+    return datetime.now(TIMEZONE)
 
 def screenshot(filename, page):
     filepath = os.path.join(SCREENSHOT_FOLDER, filename)
@@ -54,7 +61,7 @@ def convert_file_to_sheets_data(file_path):
             df_data_cleaned = df_data.fillna('')
             
             # Add a column with the current timestamp
-            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            current_time = get_current_time().strftime('%Y-%m-%d %H:%M:%S')
             df_data_cleaned['UpdateTime'] = current_time
 
             # Convert problematic values to strings to prevent JSON serialization issues
@@ -227,11 +234,6 @@ def get_file():
         shutil.copy(csv_path, permanent_location)
         print(f"File copied to {permanent_location}")
 
-        # Clean up temporary files
-        os.remove(download_path)  # Remove Excel file
-        os.remove(csv_path)      # Remove CSV file
-        print("Temporary files cleaned up")
-
         browser.close()
 
 def main():
@@ -242,6 +244,11 @@ def main():
     for i in files:
         body = convert_file_to_sheets_data(i)
         push_to_google_sheets(body)
+        
+        # Clean up files after processing
+        if os.path.exists(i):
+            os.remove(i)
+            print(f"Cleaned up file: {i}")
 
     print("APP END")
 

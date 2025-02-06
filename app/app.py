@@ -11,10 +11,17 @@ import gspread
 import openpyxl
 import csv
 import json
-from app.settings import *
+from .settings import *
+from zoneinfo import ZoneInfo
 
 # Define the Google Sheets ID
 SPREADSHEET_ID = '1ECYWdaDaM7dFAuQVEBFnba93WGuNMA5mqczawIIMB98'
+
+# Set timezone to Bangkok
+TIMEZONE = ZoneInfo("Asia/Bangkok")
+
+def get_current_time():
+    return datetime.now(TIMEZONE)
 
 def screenshot(filename, page):
     filepath = os.path.join(SCREENSHOT_FOLDER, filename)
@@ -52,8 +59,8 @@ def convert_file_to_sheets_data(file_path):
             # Fill NaN values with empty string
             df_data_cleaned = df_data.fillna('')
             
-            # Add a column with the current timestamp
-            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # Add a column with the current timestamp in Bangkok time
+            current_time = get_current_time().strftime('%Y-%m-%d %H:%M:%S')
             df_data_cleaned['UpdateTime'] = current_time
 
             # Convert problematic values to strings to prevent JSON serialization issues
@@ -86,8 +93,8 @@ def push_to_google_sheets(df_data):
         # set up credentials
         credentials = service_account.Credentials.from_service_account_file(PATH_TO_GOOGLE_KEY)
 
-        # get current month in format YYYY_MM
-        current_month = datetime.now().strftime('%Y_%m')
+        # get current month in format YYYY_MM using Bangkok time
+        current_month = get_current_time().strftime('%Y_%m')
 
         # set up gspread lib
         gc = gspread.service_account(filename=PATH_TO_GOOGLE_KEY)
@@ -161,8 +168,8 @@ def get_file():
         screenshot(filename="TransactionsPage.png", page=page)
         print(f"Opened transactions page")
 
-        # Get the current day and the previous day
-        current_date = datetime.today()
+        # Get the current day in Bangkok time
+        current_date = get_current_time()
         current_day_text = current_date.strftime('%A %d/%m/')
         current_month_text = current_date.strftime('%B')
         current_day = str(current_date.day)
