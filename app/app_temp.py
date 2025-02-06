@@ -60,29 +60,35 @@ def convert_file_to_sheets_data(file_path):
             # Fill NaN values with empty string
             df_data_cleaned = df_data.fillna('')
             
-            # Convert Date column to Bangkok timezone
+            # Log and process dates
             if 'Date' in df_data_cleaned.columns:
-                print("Original dates before conversion:")
+                print("Original dates before processing:")
                 print(df_data_cleaned['Date'].head())
-                print("\nConverting dates to Bangkok timezone")
-                df_data_cleaned['Date'] = pd.to_datetime(df_data_cleaned['Date'])
-                print("\nDates after to_datetime:")
+                
+                # Parse dates and format them consistently
+                def parse_and_format_date(date_str):
+                    try:
+                        # Parse with explicit format DD/MM/YYYY HH:MM:SS
+                        dt = pd.to_datetime(date_str, format='%d/%m/%Y %H:%M:%S')
+                        # Keep the same format
+                        return dt.strftime('%d/%m/%Y %H:%M:%S')
+                    except:
+                        print(f"Warning: Could not parse date: {date_str}")
+                        return date_str
+                
+                df_data_cleaned['Date'] = df_data_cleaned['Date'].apply(parse_and_format_date)
+                
+                print("Dates after processing:")
                 print(df_data_cleaned['Date'].head())
-                df_data_cleaned['Date'] = df_data_cleaned['Date'].dt.tz_localize('UTC').dt.tz_convert('Asia/Bangkok').dt.strftime('%d/%m/%Y %H:%M:%S')
-                print("\nFinal converted dates:")
-                print(df_data_cleaned['Date'].head())
-            
-            # Add a column with the current timestamp
-            current_time = get_current_time().strftime('%Y-%m-%d %H:%M:%S')
-            df_data_cleaned['UpdateTime'] = current_time
-
-            # Log date range information
-            if 'Date' in df_data_cleaned.columns:
                 min_date = df_data_cleaned['Date'].min()
                 max_date = df_data_cleaned['Date'].max()
                 print(f"Data date range: from {min_date} to {max_date}")
                 print(f"Number of unique dates: {df_data_cleaned['Date'].nunique()}")
                 print(f"Total rows per date:\n{df_data_cleaned.groupby('Date').size()}")
+            
+            # Add a column with the current timestamp
+            current_time = get_current_time().strftime('%Y-%m-%d %H:%M:%S')
+            df_data_cleaned['UpdateTime'] = current_time
 
             # Convert problematic values to strings to prevent JSON serialization issues
             def safe_conversion(x):
