@@ -61,11 +61,14 @@ def convert_file_to_sheets_data(file_path):
             
             # Convert Date column to Bangkok timezone
             if 'Date' in df_data_cleaned.columns:
-                print("Converting dates to Bangkok timezone")
+                print("Original dates before conversion:")
+                print(df_data_cleaned['Date'].head())
+                print("\nConverting dates to Bangkok timezone")
                 df_data_cleaned['Date'] = pd.to_datetime(df_data_cleaned['Date'])
+                print("\nDates after to_datetime:")
+                print(df_data_cleaned['Date'].head())
                 df_data_cleaned['Date'] = df_data_cleaned['Date'].dt.tz_localize('UTC').dt.tz_convert('Asia/Bangkok').dt.strftime('%d/%m/%Y %H:%M:%S')
-                # Print sample of dates after conversion
-                print("Sample of converted dates:")
+                print("\nFinal converted dates:")
                 print(df_data_cleaned['Date'].head())
             
             # Add a column with the current timestamp in Bangkok time
