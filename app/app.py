@@ -63,6 +63,14 @@ def convert_file_to_sheets_data(file_path):
             current_time = get_current_time().strftime('%Y-%m-%d %H:%M:%S')
             df_data_cleaned['UpdateTime'] = current_time
 
+            # Log date range information
+            if 'Date' in df_data_cleaned.columns:
+                min_date = df_data_cleaned['Date'].min()
+                max_date = df_data_cleaned['Date'].max()
+                print(f"Data date range: from {min_date} to {max_date}")
+                print(f"Number of unique dates: {df_data_cleaned['Date'].nunique()}")
+                print(f"Total rows per date:\n{df_data_cleaned.groupby('Date').size()}")
+
             # Convert problematic values to strings to prevent JSON serialization issues
             def safe_conversion(x):
                 if isinstance(x, (float, bool)):
@@ -177,6 +185,7 @@ def get_file():
         print(f"Current day: {current_day_text}")
         print(f"Current month: {current_month_text}")
         print(f"Current day: {current_day}")
+        print(f"Attempting to select date range: 1-{current_day} {current_month_text}")
 
         # Select the current day of the month
         print(f"Clicking current day: {current_day_text}")
