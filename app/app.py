@@ -48,6 +48,12 @@ def convert_xlsx_to_csv(xlsx_path, csv_path):
     print("Conversion done")
 
 def convert_file_to_sheets_data(file_path):
+    # Get machine's timezone
+    machine_tz = datetime.now().astimezone().tzinfo
+    print(f"Machine timezone: {machine_tz}")
+    print(f"Machine timezone offset: {datetime.now(machine_tz).utcoffset()}")
+    print(f"Target Bangkok timezone offset: {datetime.now(TIMEZONE).utcoffset()}")
+    
     encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
     for encoding in encodings:
         try:
@@ -64,20 +70,26 @@ def convert_file_to_sheets_data(file_path):
                 print("Original dates from CSV:")
                 print(df_data_cleaned['Date'].head())
                 
-                # Verify the date format is correct (DD/MM/YYYY HH:MM:SS)
-                def verify_date_format(date_str):
+                def adjust_timezone(date_str):
                     try:
-                        # Just verify the format is correct, don't modify the date
-                        datetime.strptime(date_str, '%d/%m/%Y %H:%M:%S')
-                        return date_str
+                        # Parse the date string
+                        dt = datetime.strptime(date_str, '%d/%m/%Y %H:%M:%S')
+                        
+                        # If machine is in UTC and we need Bangkok time (+7)
+                        if machine_tz.tzname(None) == 'UTC':
+                            print(f"Converting {date_str} from UTC to Bangkok time")
+                            dt = dt + timedelta(hours=7)
+                        
+                        # Format back to string
+                        return dt.strftime('%d/%m/%Y %H:%M:%S')
                     except:
-                        print(f"Warning: Date not in expected format: {date_str}")
+                        print(f"Warning: Could not parse date: {date_str}")
                         return date_str
                 
-                # Just verify the format, don't modify the dates
-                df_data_cleaned['Date'] = df_data_cleaned['Date'].apply(verify_date_format)
+                # Adjust timezone if needed
+                df_data_cleaned['Date'] = df_data_cleaned['Date'].apply(adjust_timezone)
                 
-                print("Final dates (should be unchanged):")
+                print("Final dates after timezone adjustment:")
                 print(df_data_cleaned['Date'].head())
                 min_date = df_data_cleaned['Date'].min()
                 max_date = df_data_cleaned['Date'].max()
