@@ -60,6 +60,12 @@ def convert_file_to_sheets_data(file_path):
             # Fill NaN values with empty string
             df_data_cleaned = df_data.fillna('')
             
+            # Convert Date column to Bangkok timezone
+            if 'Date' in df_data_cleaned.columns:
+                print("Converting dates to Bangkok timezone")
+                df_data_cleaned['Date'] = pd.to_datetime(df_data_cleaned['Date'])
+                df_data_cleaned['Date'] = df_data_cleaned['Date'].dt.tz_localize('UTC').dt.tz_convert('Asia/Bangkok').dt.strftime('%d/%m/%Y %H:%M:%S')
+            
             # Add a column with the current timestamp
             current_time = get_current_time().strftime('%Y-%m-%d %H:%M:%S')
             df_data_cleaned['UpdateTime'] = current_time
