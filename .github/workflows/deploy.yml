@@ -69,13 +69,15 @@ jobs:
       run: |
         gcloud scheduler jobs create http ${{ env.SERVICE }}-scheduler \
           --location ${{ env.REGION }} \
-          --schedule "0 10-23 * * *" \
+          --schedule "0 11-23 * * *" \
+          --time-zone "Asia/Bangkok" \
           --http-method POST \
           --uri "https://${{ env.REGION }}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${{ env.PROJECT_ID }}/jobs/${{ env.SERVICE }}:run" \
           --oauth-service-account-email "${{ secrets.WIF_SERVICE_ACCOUNT }}" || \
         gcloud scheduler jobs update http ${{ env.SERVICE }}-scheduler \
           --location ${{ env.REGION }} \
-          --schedule "0 10-23 * * *" \
+          --schedule "0 11-23 * * *" \
+          --time-zone "Asia/Bangkok" \
           --http-method POST \
           --uri "https://${{ env.REGION }}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${{ env.PROJECT_ID }}/jobs/${{ env.SERVICE }}:run" \
           --oauth-service-account-email "${{ secrets.WIF_SERVICE_ACCOUNT }}" 
