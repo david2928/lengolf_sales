@@ -1,47 +1,49 @@
 steps:
-  # Build the container image with secrets
+  # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'build'
-      - '-t'
-      - 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/lengolf-sales/app:$COMMIT_SHA'
-      - '--build-arg'
-      - 'APP_LOGIN=${_APP_LOGIN}'
-      - '--build-arg'
-      - 'APP_PASSWORD=${_APP_PASSWORD}'
-      - '--build-arg'
-      - 'GOOGLE_KEY=${_GOOGLE_KEY}'
-      - '.'
+    args: [
+      'build', 
+      '-t', 'gcr.io/$PROJECT_ID/lengolf-sales-api:$COMMIT_SHA',
+      '-t', 'gcr.io/$PROJECT_ID/lengolf-sales-api:latest',
+      '.'
+    ]
+    timeout: 1200s
 
-  # Push the container image to Artifact Registry
+  # Push the container image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/lengolf-sales/app:$COMMIT_SHA']
+    args: ['push', 'gcr.io/$PROJECT_ID/lengolf-sales-api:$COMMIT_SHA']
 
-  # Deploy to Cloud Run jobs
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
-    args:
-      - 'run'
-      - 'jobs'
-      - 'update'
-      - 'lengolf-sales'
-      - '--image'
-      - 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/lengolf-sales/app:$COMMIT_SHA'
-      - '--region'
-      - 'asia-southeast1'
-      - '--schedule'
-      - '0 10-23 * * *'
-      - '--max-retries'
-      - '3'
-      - '--task-timeout'
-      - '3600s'  # 1 hour timeout
-      - '--set-env-vars'
-      - 'APP_LOGIN=${_APP_LOGIN},APP_PASSWORD=${_APP_PASSWORD},GOOGLE_KEY=${_GOOGLE_KEY}'
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/lengolf-sales-api:latest']
 
+  # Deploy to Cloud Run
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'run', 'deploy', 'lengolf-sales-api',
+      '--image', 'gcr.io/$PROJECT_ID/lengolf-sales-api:$COMMIT_SHA',
+      '--region', 'asia-southeast1',
+      '--platform', 'managed',
+      '--allow-unauthenticated',
+      '--port', '8080',
+      '--memory', '2Gi',
+      '--cpu', '1',
+      '--timeout', '300',
+      '--concurrency', '10',
+      '--min-instances', '0',
+      '--max-instances', '5',
+      '--set-env-vars', 'PYTHONPATH=/app',
+      '--set-env-vars', 'PORT=8080'
+    ]
+
+# Store images in Container Registry
 images:
-  - 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/lengolf-sales/app:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/lengolf-sales-api:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/lengolf-sales-api:latest'
 
-substitutions:
-  _APP_LOGIN: ''
-  _APP_PASSWORD: ''
-  _GOOGLE_KEY: '' 
+# Build configuration
+options:
+  machineType: 'E2_HIGHCPU_8'
+  diskSizeGb: 100
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s 

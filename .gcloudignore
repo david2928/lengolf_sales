@@ -1,0 +1,38 @@
+# Git files
+.git/
+.github/
+.gitignore
+
+# Development files
+.cursor/
+screenshots/
+*.md
+!README.md
+
+# Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+.env
+.venv/
+venv/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test files
+test_*
+*_test.py 

@@ -1,296 +1,189 @@
-import os
-import shutil
-from datetime import datetime, timedelta
-from pathlib import Path
-from playwright.sync_api import sync_playwright
-from googleapiclient import discovery
-from google.oauth2 import service_account
-from googleapiclient.errors import HttpError
-import pandas as pd
-import gspread
-import openpyxl
-import csv
-import json
-from .settings import *
-from zoneinfo import ZoneInfo
+#!/usr/bin/env python3
 
-# Define the Google Sheets ID
-SPREADSHEET_ID = '1ECYWdaDaM7dFAuQVEBFnba93WGuNMA5mqczawIIMB98'
+import logging
+from datetime import datetime, date
+from flask import Flask, jsonify, request
+from services import SalesService
 
-# Set timezone to Bangkok
-TIMEZONE = ZoneInfo("Asia/Bangkok")
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def get_current_time():
-    return datetime.now(TIMEZONE)
+# Initialize Flask app
+app = Flask(__name__)
 
-def screenshot(filename, page):
-    filepath = os.path.join(SCREENSHOT_FOLDER, filename)
-    print(f"Saving screenshot to: {filepath}")
-    if DEBUG:
-        page.screenshot(path=filepath)
+# Initialize services
+sales_service = SalesService()
 
-def list_download_dir():
-    print("List of downloaded csv files locally")
-    files = []
-    for child in [i for i in Path(DOWNLOAD_FOLDER).iterdir() if ".csv" in str(i)]:
-        print(child)
-        files.append(child)
-    return files
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'service': 'lengolf-sales-api'
+    })
 
-def convert_xlsx_to_csv(xlsx_path, csv_path):
-    print(f"Converting {xlsx_path} to {csv_path}")
-    workbook = openpyxl.load_workbook(xlsx_path)
-    sheet = workbook.active
-    with open(csv_path, 'w', newline="", encoding='utf-8') as f:
-        writer = csv.writer(f)
-        for row in sheet.iter_rows(values_only=True):
-            writer.writerow(row)
-    print("Conversion done")
+@app.route('/info', methods=['GET'])
+def info():
+    """Service information endpoint"""
+    return jsonify({
+        'service': 'Lengolf Sales Sync API',
+        'version': '2.0.0',
+        'description': 'Microservice for synchronizing sales data from Qashier POS to Supabase',
+        'endpoints': {
+            'health': 'GET /health - Health check',
+            'sync_daily': 'POST /sync/daily - Trigger daily sync',
+            'sync_historical': 'POST /sync/historical - Trigger historical sync for date range (month by month)',
+            'sync_estimates': 'POST /sync/estimates - Get sync estimates for date range',
+            'info': 'GET /info - Service information'
+        },
+        'features': {
+            'historical_sync': 'Sync any date range from March 2024 onwards',
+            'monthly_processing': 'Large date ranges are processed month by month',
+            'validation': 'Automatic date range validation and adjustment',
+            'estimates': 'Get time and chunk estimates before syncing'
+        },
+        'timestamp': datetime.now().isoformat()
+    })
 
-def convert_file_to_sheets_data(file_path):
-    # Get machine's timezone
-    machine_tz = datetime.now().astimezone().tzinfo
-    print(f"Machine timezone: {machine_tz}")
-    print(f"Machine timezone offset: {datetime.now(machine_tz).utcoffset()}")
-    print(f"Target Bangkok timezone offset: {datetime.now(TIMEZONE).utcoffset()}")
-    
-    encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
-    for encoding in encodings:
-        try:
-            print(f"Trying to read file with encoding: {encoding}")
-            df_data = pd.read_csv(file_path, encoding=encoding, skiprows=2)  # Skipping the first two rows
-            print(f"Data read with shape: {df_data.shape}")
-            print(f"Data columns before setting headers: {df_data.columns}")
-
-            # Fill NaN values with empty string
-            df_data_cleaned = df_data.fillna('')
-            
-            # Log and process dates
-            if 'Date' in df_data_cleaned.columns:
-                print("Original dates from CSV:")
-                print(df_data_cleaned['Date'].head())
-                
-                def adjust_timezone(date_str):
-                    try:
-                        # Parse the date string
-                        dt = datetime.strptime(date_str, '%d/%m/%Y %H:%M:%S')
-                        
-                        # If machine is in UTC and we need Bangkok time (+7)
-                        if machine_tz.tzname(None) == 'UTC':
-                            print(f"Converting {date_str} from UTC to Bangkok time")
-                            dt = dt + timedelta(hours=7)
-                        
-                        # Format back to string
-                        return dt.strftime('%d/%m/%Y %H:%M:%S')
-                    except:
-                        print(f"Warning: Could not parse date: {date_str}")
-                        return date_str
-                
-                # Adjust timezone if needed
-                df_data_cleaned['Date'] = df_data_cleaned['Date'].apply(adjust_timezone)
-                
-                print("Final dates after timezone adjustment:")
-                print(df_data_cleaned['Date'].head())
-                min_date = df_data_cleaned['Date'].min()
-                max_date = df_data_cleaned['Date'].max()
-                print(f"Data date range: from {min_date} to {max_date}")
-                print(f"Number of unique dates: {df_data_cleaned['Date'].nunique()}")
-                print(f"Total rows per date:\n{df_data_cleaned.groupby('Date').size()}")
-            
-            # Add a column with the current timestamp in Bangkok time
-            current_time = get_current_time().strftime('%Y-%m-%d %H:%M:%S')
-            df_data_cleaned['UpdateTime'] = current_time
-
-            # Convert problematic values to strings to prevent JSON serialization issues
-            def safe_conversion(x):
-                if isinstance(x, (float, bool)):
-                    if isinstance(x, float) and (pd.isna(x) or x == float('inf') or x == float('-inf') or abs(x) > 1.7976931348623157e+308):
-                        print(f"Converting problematic float value: {x}")
-                        return str(x)
-                    else:
-                        return str(x)
-                return x
-
-            for col in df_data_cleaned.columns:
-                print(f"Processing column: {col}")
-                df_data_cleaned[col] = df_data_cleaned[col].apply(safe_conversion)
-
-            print("File read and cleaned successfully")
-            return df_data_cleaned
-        except UnicodeDecodeError:
-            print(f"Failed to read file with encoding: {encoding}")
-        except Exception as ex:
-            print(f"An error occurred while reading the file: {ex}")
-            raise ex
-
-    raise UnicodeDecodeError(f"None of the specified encodings worked for the file: {file_path}")
-
-
-def push_to_google_sheets(df_data):
+@app.route('/sync/daily', methods=['POST'])
+def sync_daily():
+    """Trigger daily sync from Qashier POS to Supabase"""
     try:
-        # set up credentials
-        credentials = service_account.Credentials.from_service_account_file(PATH_TO_GOOGLE_KEY)
-
-        # get current month in format YYYY_MM using Bangkok time
-        current_month = get_current_time().strftime('%Y_%m')
-
-        # set up gspread lib
-        gc = gspread.service_account(filename=PATH_TO_GOOGLE_KEY)
-
-        # open the Google Sheet
-        sheet = gc.open_by_key("1ECYWdaDaM7dFAuQVEBFnba93WGuNMA5mqczawIIMB98")
-
-        # check if the worksheet exists, if not create it
-        try:
-            worksheet = sheet.worksheet(current_month)
-        except gspread.exceptions.WorksheetNotFound:
-            worksheet = sheet.add_worksheet(title=current_month, rows="100", cols="20")
-
-        # clear the worksheet before updating
-        worksheet.clear()
-
-        # update the worksheet with the dataframe
-        worksheet.update([df_data.columns.values.tolist()] + df_data.values.tolist())
-        print(f"Worksheet '{current_month}' updated successfully")
-
-    except HttpError as error:
-        print(f"An error occurred with the Google Sheets API: {error}")
-    except ValueError as ve:
-        print(f"Value error: {ve}")
+        logger.info("API: Daily sync requested")
+        result = sales_service.sync_daily_data()
+        
+        status_code = 200 if result['success'] else 500
+        return jsonify(result), status_code
+        
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        logger.error(f"API: Error in daily sync: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Internal server error: {str(e)}'
+        }), 500
 
-
-def get_file():
-    print("Getting files from CMS")
-    with sync_playwright() as p:
-        if DEBUG:
-            print(f"HEADLESS = {HEADLESS}")
-            print(f"APP_LOGIN = {APP_LOGIN}")
-            print(f"APP_PASSWORD = {APP_PASSWORD}")
-            print(f"URL = {URL}")
-            print(f"URL_CUST_MAGEMENT = {URL_CUST_MAGEMENT}")
-            print(f"SCREENSHOT_FOLDER = {SCREENSHOT_FOLDER}")
-
-        browser = p.chromium.launch(headless=True)  # Set headless to False
-        page = browser.new_page()
-        print(f"Opening main page: {URL}")
-        page.goto(URL)
-        page.wait_for_load_state()
-        print(f"Opened main page {page.title()}")
-
-        screenshot(filename="LoginPageBefore.png", page=page)
-
-        page.get_by_label('Username').fill(APP_LOGIN)
-        page.get_by_label('Password').fill(APP_PASSWORD)
-
-        print(f"Input log/pass")
-        print(f"Pressing LOGIN...")
-
-        screenshot(filename="LoginPageAfter.png", page=page)
-        page.locator('button:has-text("Login")').click()
-        print(f"Pressed LOGIN")
-
-        page.wait_for_timeout(2000)
-        page.wait_for_load_state()
-        print(f"Login finished")
-
-        # Go to transactions page
-        transactions_url = "https://hq.qashier.com/#/transactions"
-        print(f"Opening transactions page: {transactions_url}")
-        page.goto(transactions_url)
-
-        page.wait_for_timeout(2000)
-        page.wait_for_load_state()
-
-        screenshot(filename="TransactionsPage.png", page=page)
-        print(f"Opened transactions page")
-
-        # Get the current day in Bangkok time
-        current_date = get_current_time()
-        current_day_text = current_date.strftime('%A %d/%m/')
-        current_month_text = current_date.strftime('%B')
-        current_day = str(current_date.day)
-
-        print(f"Current day: {current_day_text}")
-        print(f"Current month: {current_month_text}")
-        print(f"Current day: {current_day}")
-        print(f"Attempting to select date range: 1-{current_day} {current_month_text}")
-
-        # Select the current day of the month
-        print(f"Clicking current day: {current_day_text}")
-        page.get_by_role("button", name=current_day_text).click()
-
-        # Select the first day of the current month
-        print(f"Clicking first day: 1")
-        page.get_by_role("button", name="1", exact=True).click()
-
-        # Select today's date
-        print(f"Clicking current day: {current_day}")
-        page.get_by_role("button", name=current_day, exact=True).click()
-
-        screenshot(filename="DateRangeSelected.png", page=page)
-        print("Date range selected")
-
-        # Click OK to confirm the date range
-        print("Clicking OK to confirm date range")
-        page.get_by_role("button", name="OK").click()
-        page.wait_for_timeout(2000)
-        page.wait_for_load_state()
-
-        screenshot(filename="DateRangeConfirmed.png", page=page)
-        print("Date range confirmed")
-
-        # Click the EXPORT dropdown button
-        print("Clicking EXPORT dropdown")
-        page.locator('button:has-text("Export") i.material-icons:has-text("cloud_download")').click()
-        page.wait_for_timeout(2000)
-
-        screenshot(filename="ExportDropdownClicked.png", page=page)
-        print("Export dropdown clicked")
-
-        # Click TRANSACTION DETAILS option
-        print("Clicking TRANSACTION DETAILS")
-        page.locator('div.q-item__section:has-text("TRANSACTION DETAILS")').click()
-        page.wait_for_timeout(2000)
-
-        screenshot(filename="TransactionDetailsClicked.png", page=page)
-        print("Transaction details clicked")
-
-        # Click CONFIRM in the confirmation dialog
-        print("Clicking CONFIRM in dialog")
-        with page.expect_download() as download_info:
-            page.get_by_role("button", name="CONFIRM").click()
-            print("Confirm clicked, waiting for download")
-            download = download_info.value
-
-        # Save the downloaded file
-        download_path = os.path.join(DOWNLOAD_FOLDER, download.suggested_filename)
-        download.save_as(download_path)
-        print(f"File downloaded to {download_path}")
-
-        # Convert the downloaded XLSX file to CSV
-        csv_path = os.path.splitext(download_path)[0] + ".csv"
-        convert_xlsx_to_csv(download_path, csv_path)
-
-        # Copy the CSV file to a permanent location
-        permanent_location = os.path.join(os.path.expanduser("~"), "Documents")
-        os.makedirs(permanent_location, exist_ok=True)
-        shutil.copy(csv_path, permanent_location)
-        print(f"File copied to {permanent_location}")
-
-        browser.close()
-
-def main():
-    print("APP START")
+@app.route('/sync/historical', methods=['POST'])
+def sync_historical():
+    """
+    Trigger historical sync for a specific date range (processed month by month)
     
-    get_file()
-    files = list_download_dir()
-    for i in files:
-        body = convert_file_to_sheets_data(i)
-        push_to_google_sheets(body)
+    Expected JSON body:
+    {
+        "start_date": "2024-03-01",  # YYYY-MM-DD format
+        "end_date": "2024-06-30"     # YYYY-MM-DD format
+    }
+    
+    The date range will be automatically split into monthly chunks and processed sequentially.
+    Large ranges (>12 months) will be automatically limited for performance.
+    """
+    try:
+        # Validate request body
+        if not request.is_json:
+            return jsonify({
+                'success': False,
+                'message': 'Request must be JSON'
+            }), 400
+        
+        data = request.get_json()
+        
+        # Validate required fields
+        if 'start_date' not in data or 'end_date' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'start_date and end_date are required fields'
+            }), 400
+        
+        # Parse dates
+        try:
+            start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date()
+            end_date = datetime.strptime(data['end_date'], '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid date format. Use YYYY-MM-DD'
+            }), 400
+        
+        logger.info(f"API: Historical sync requested for {start_date} to {end_date}")
+        result = sales_service.sync_historical_data(start_date, end_date)
+        
+        status_code = 200 if result['success'] else 500
+        return jsonify(result), status_code
+        
+    except Exception as e:
+        logger.error(f"API: Error in historical sync: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Internal server error: {str(e)}'
+        }), 500
 
-    print("APP END")
+@app.route('/sync/estimates', methods=['POST'])
+def get_sync_estimates():
+    """
+    Get estimates for syncing a date range without actually performing the sync
+    
+    Expected JSON body:
+    {
+        "start_date": "2024-03-01",  # YYYY-MM-DD format
+        "end_date": "2024-06-30"     # YYYY-MM-DD format
+    }
+    
+    Returns information about:
+    - How many monthly chunks will be created
+    - Total days to sync
+    - Estimated time
+    - Validation warnings
+    - Recommendations
+    """
+    try:
+        # Validate request body
+        if not request.is_json:
+            return jsonify({
+                'success': False,
+                'message': 'Request must be JSON'
+            }), 400
+        
+        data = request.get_json()
+        
+        # Validate required fields
+        if 'start_date' not in data or 'end_date' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'start_date and end_date are required fields'
+            }), 400
+        
+        # Parse dates
+        try:
+            start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date()
+            end_date = datetime.strptime(data['end_date'], '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid date format. Use YYYY-MM-DD'
+            }), 400
+        
+        logger.info(f"API: Sync estimates requested for {start_date} to {end_date}")
+        result = sales_service.get_sync_estimates(start_date, end_date)
+        
+        status_code = 200 if result['success'] else 500
+        return jsonify(result), status_code
+        
+    except Exception as e:
+        logger.error(f"API: Error calculating sync estimates: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Internal server error: {str(e)}'
+        }), 500
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    from config import config
+    
+    logger.info(f"Starting Lengolf Sales API on {config.host}:{config.port}")
+    logger.info(f"Debug mode: {config.debug}")
+    
+    app.run(
+        host=config.host,
+        port=config.port,
+        debug=config.debug
+    ) 
