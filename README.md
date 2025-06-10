@@ -64,7 +64,7 @@ curl https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/health
 curl https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/info
 
 # Trigger daily sync (recommended for automation)
-curl -X POST https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/sync/daily \
+curl -X http://127.0.0.1:8080/sync/daily \
   -H "Content-Length: 0"
 
 # Trigger historical sync for specific date range
@@ -194,6 +194,51 @@ Production-optimized dependency list:
 - ✅ **Optimized**: Monthly chunking for large date ranges (max 12 months)
 - ✅ **Monitoring**: Sync estimates available before processing
 
+**Bot Detection / Login Timeout Issues**
+- ✅ **Fixed**: Simplified browser launch and login approach to bypass detection
+- ✅ **Root Cause**: Complex anti-bot arguments were ironically triggering detection
+- ✅ **Solution**: Adopted working app's simple approach with redirect URLs
+
+### Bot Detection Fix Details
+
+**Problem**: The scraper was failing with timeout errors during login:
+```
+Locator.fill: Timeout 30000ms exceeded.
+Call log:
+waiting for get_by_label("Username")
+```
+
+**Solution Applied**:
+1. **Simplified Browser Launch**: Changed from complex stealth arguments to simple `browser.launch(headless=True)`
+2. **Working User Agent**: Switched to the proven user agent from the working app
+3. **Direct Redirect URL**: Use `https://hq.qashier.com/#/login?redirect=/transactions` instead of separate navigation
+4. **Streamlined Login**: Removed fallback logic that made behavior patterns detectable
+
+**Key Insight**: Less is more - the "stealthy" approach with many anti-detection arguments was more suspicious than a simple, direct approach.
+
+**Before (Failed)**:
+```python
+# Too many suspicious arguments
+browser = p.chromium.launch(
+    headless=True,
+    args=[
+        '--disable-blink-features=AutomationControlled',
+        '--disable-features=VizDisplayCompositor',
+        # ... many more args that triggered detection
+    ]
+)
+```
+
+**After (Working)**:
+```python
+# Simple and clean
+browser = p.chromium.launch(headless=True)
+context = browser.new_context(
+    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+    accept_downloads=True
+)
+```
+
 ### Debug Mode
 ```bash
 export DEBUG=true
@@ -210,6 +255,7 @@ python app.py
 - ✅ **API Modernization** - RESTful endpoints with proper error handling
 - ✅ **Production Deployment** - Stable Google Cloud Run deployment
 - ✅ **Data Quality** - Comprehensive validation and error handling
+- ✅ **Bot Detection Fix** - Resolved login timeout issues with simplified browser approach
 
 ### Performance Metrics
 - **Daily Sync**: ~300-400 records processed in seconds

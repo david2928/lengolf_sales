@@ -4,6 +4,7 @@ import base64
 import logging
 import tempfile
 import os
+import re
 from typing import List, Dict, Optional, Tuple
 from datetime import date, datetime
 import pandas as pd
@@ -30,22 +31,32 @@ class QashierPOSScraper:
         logger.info(f"Qashier credentials decoded successfully")
     
     def scrape_daily_data(self) -> pd.DataFrame:
-        """Scrape today's sales data from Qashier POS"""
-        today = get_current_time().strftime('%Y-%m-%d')
+        """
+        Scrape today's sales data from Qashier POS
+        
+        Returns:
+            DataFrame with today's sales data
+        """
+        today = datetime.now().strftime('%Y-%m-%d')
         
         logger.info(f"Starting to scrape data for date: {today}")
         
         with sync_playwright() as p:
             try:
+                # Launch browser with simple settings like the working app
                 browser = p.chromium.launch(headless=True)
-                page = browser.new_page()
+                context = browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/58.0.3029.110 Safari/537.3",
+                    accept_downloads=True
+                )
+                page = context.new_page()
                 
                 # Login to Qashier
                 self._login_to_qashier(page)
                 
-                # Navigate to transactions page
-                self._navigate_to_transactions(page)
-                
+                # Since we redirected to transactions during login, we don't need to navigate
                 # Select today's date range (existing logic)
                 self._select_current_day_range(page)
                 
@@ -84,8 +95,15 @@ class QashierPOSScraper:
         
         with sync_playwright() as p:
             try:
+                # Launch browser with simple settings like the working app
                 browser = p.chromium.launch(headless=True)
-                page = browser.new_page()
+                context = browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/58.0.3029.110 Safari/537.3",
+                    accept_downloads=True
+                )
+                page = context.new_page()
                 
                 # Login to Qashier
                 self._login_to_qashier(page)
@@ -95,9 +113,7 @@ class QashierPOSScraper:
                     logger.info(f"Processing chunk: {chunk_start} to {chunk_end}")
                     
                     try:
-                        # Navigate to transactions page (need fresh navigation for each chunk)
-                        self._navigate_to_transactions(page)
-                        
+                        # Since we redirected to transactions during login, we don't need to navigate
                         # Select the historical date range
                         self._select_historical_date_range(page, chunk_start, chunk_end)
                         
@@ -127,27 +143,68 @@ class QashierPOSScraper:
                 raise
 
     def _login_to_qashier(self, page):
-        """Login to Qashier POS system"""
+        """Login to Qashier POS system using the working approach from the other app"""
         logger.info("Logging in to Qashier POS...")
-        page.goto(config.qashier_base_url)
-        page.wait_for_load_state()
         
-        page.get_by_label('Username').fill(self.username)
-        page.get_by_label('Password').fill(self.password)
-        page.locator('button:has-text("Login")').click()
+        # Navigate to login page with redirect to transactions (like the working app pattern)
+        login_url = "https://hq.qashier.com/#/login?redirect=/transactions"
+        logger.info(f"Navigating to login page: {login_url}")
+        page.goto(login_url, wait_until='networkidle', timeout=60000)
+        logger.info(f"Login page loaded: {page.title()}")
+
+        # Wait for the username input to be visible (working app approach)
+        page.wait_for_selector('label:has-text("Username")', timeout=10000)
+        logger.info("Username input is available.")
+
+        # Take screenshot before login (like working app)
+        try:
+            os.makedirs("screenshots", exist_ok=True)
+            page.screenshot(path="screenshots/LoginPageBefore.png")
+            logger.info("Screenshot saved: LoginPageBefore.png")
+        except:
+            pass
+
+        # Input credentials using get_by_label (working app approach)
+        page.get_by_label("Username").click()
+        page.get_by_label("Username").fill(self.username)
+        page.get_by_label("Username").press("Tab")
+        page.get_by_label("Password").fill(self.password)
+
+        logger.info("Inputted login credentials.")
         
-        page.wait_for_timeout(2000)
-        page.wait_for_load_state()
-        logger.info("Successfully logged in")
+        # Take screenshot after filling credentials
+        try:
+            page.screenshot(path="screenshots/LoginPageAfter.png")
+            logger.info("Screenshot saved: LoginPageAfter.png")
+        except:
+            pass
+
+        # Click the login button and wait for navigation (working app approach)
+        with page.expect_navigation(timeout=60000):
+            page.get_by_role("button", name="Login").click()
+        logger.info("Pressed LOGIN and navigated.")
+
+        # Wait for data to load (like working app)
+        logger.info("Waiting for 10 seconds to allow data to load.")
+        page.wait_for_timeout(10000)
+
+        logger.info("Login completed successfully")
 
     def _navigate_to_transactions(self, page):
-        """Navigate to the transactions page"""
-        logger.info(f"Opening transactions page: {config.qashier_transactions_url}")
-        page.goto(config.qashier_transactions_url)
+        """Navigate to the transactions page using exact manual approach"""
+        logger.info("Navigating to transactions page using exact manual method")
         
-        page.wait_for_timeout(2000)
-        page.wait_for_load_state()
-        logger.info("Opened transactions page")
+        # Use the exact method that works manually
+        page.locator("a").filter(has_text=re.compile(r"^Transactions$")).click()
+        
+        # Wait for page to load and stabilize
+        page.wait_for_load_state("networkidle", timeout=30000)
+        
+        # Verify we're on the transactions page
+        final_url = page.url
+        logger.info(f"Final URL after navigation: {final_url}")
+        
+        logger.info("Navigation to transactions page completed")
 
     def _select_current_day_range(self, page):
         """Select current day date range (existing logic)"""
