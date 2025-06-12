@@ -19,7 +19,7 @@ class SupabaseClient:
         self.supabase: Client = create_client(config.supabase_url, config.supabase_key)
         logger.info("Supabase client initialized successfully")
     
-    def create_sync_log(self, process_type: str = 'daily_sync') -> str:
+    def create_sync_log(self, process_type: str = 'daily_sync', metadata: Dict = None) -> str:
         """Create a new sync log entry and return batch_id"""
         batch_id = str(uuid.uuid4())
         
@@ -27,14 +27,18 @@ class SupabaseClient:
             # Use helper function to create sync log
             result = self.supabase.rpc('create_sync_log', {
                 'p_batch_id': batch_id,
-                'p_process_type': process_type
+                'p_process_type': process_type,
+                'p_metadata': metadata
             }).execute()
             
-            logger.info(f"Created sync log with batch_id: {batch_id}")
+            logger.info(f"🆔 Created sync log: {batch_id}")
+            logger.info(f"📋 Process type: {process_type}")
+            if metadata:
+                logger.info(f"📊 Metadata: {metadata}")
             return batch_id
             
         except Exception as e:
-            logger.error(f"Failed to create sync log: {e}")
+            logger.error(f"❌ Failed to create sync log: {e}")
             raise
     
     def update_sync_log(self, batch_id: str, status: str, records_processed: int = 0, 
@@ -48,10 +52,26 @@ class SupabaseClient:
                 'p_error_message': error_message,
                 'p_metadata': metadata
             }).execute()
-            logger.info(f"Updated sync log {batch_id} with status: {status}")
+            
+            # Enhanced logging with status icons
+            status_icon = {
+                'completed': '✅',
+                'failed': '❌',
+                'running': '⏳',
+                'processing': '🔄'
+            }.get(status, '📝')
+            
+            logger.info(f"{status_icon} Sync Status Update:")
+            logger.info(f"   🆔 Batch ID: {batch_id}")
+            logger.info(f"   📊 Status: {status.upper()}")
+            logger.info(f"   📈 Records: {records_processed}")
+            if error_message:
+                logger.error(f"   ❌ Error: {error_message}")
+            if metadata:
+                logger.info(f"   📋 Metadata: {metadata}")
             
         except Exception as e:
-            logger.error(f"Failed to update sync log: {e}")
+            logger.error(f"❌ Failed to update sync log: {e}")
     
     def insert_staging_data(self, df: pd.DataFrame, batch_id: str) -> int:
         """TRUNCATE AND REPLACE: Delete existing data for date range, then insert fresh data"""
@@ -94,10 +114,10 @@ class SupabaseClient:
             logger.info(f"Preparing {len(df_clean)} records for insert...")
             
             # Convert cleaned DataFrame to records for fresh insert
-            records = []
+            # NEW: Map to exact CSV format columns
+            bulk_records = []
             
             for _, row in df_clean.iterrows():
-                # Map standardized columns to database function parameters
                 # Ensure date is in a consistent format for the database
                 date_value = row.get('date', '')
                 if date_value and date_value != '':
@@ -110,35 +130,66 @@ class SupabaseClient:
                         # Keep original if parsing fails
                         pass
                 
-                record = {
-                    'p_batch_id': batch_id,
-                    'p_date': str(date_value),
-                    'p_receipt_number': str(row.get('receipt_number', '')),
-                    'p_payment_method': str(row.get('payment_method', '')),
-                    'p_payment_details': str(row.get('payment_note', '')),
-                    'p_customer_name': str(row.get('customer_name', '')),
-                    'p_customer_phone_number': str(row.get('customer_phone_number', '')),
-                    'p_product_name': str(row.get('product_name', '')),
-                    'p_tab': '',  # Not in CSV, will be filled from product lookup
-                    'p_category': '',  # Not in CSV, will be filled from product lookup
-                    'p_quantity': str(row.get('quantity', '1')),
-                    'p_unit_price': str(row.get('amount_before_subsidy', '0')),
-                    'p_total_price': str(row.get('transaction_final_amount', '0')),
-                    'p_gross_amount': str(row.get('transaction_final_amount', '0')),
-                    'p_discount_amount': str(row.get('item_discount', '0')),
-                    'p_net_sales_amount': str(row.get('transaction_final_amount', '0')),
-                    'p_tax_amount': str(row.get('transaction_vat', '0')),
-                    'p_total_amount': str(row.get('transaction_final_amount', '0')),
-                    'p_update_time': str(row.get('update_time', ''))
+                # NEW: Map to exact CSV column structure
+                bulk_record = {
+                    'import_batch_id': batch_id,
+                    
+                    # Core transaction identifiers
+                    'date': str(date_value),
+                    'receipt_number': str(row.get('receipt_number', '')),
+                    'order_number': str(row.get('order_number', '')),
+                    'invoice_no': str(row.get('invoice_no', '')),
+                    
+                    # Payment information  
+                    'invoice_payment_type': str(row.get('invoice_payment_type', '')),
+                    'total_invoice_amount': str(row.get('total_invoice_amount', '0')),
+                    'transaction_total_amount': str(row.get('transaction_total_amount', '0')),
+                    'transaction_level_percentage_discount': str(row.get('transaction_percentage_discount', '0')),
+                    'transaction_level_dollar_discount': str(row.get('transaction_dollar_discount', '0')),
+                    'transaction_total_vat': str(row.get('transaction_vat', '0')),
+                    'transaction_payment_method': str(row.get('payment_method', '')),
+                    'payment_note': str(row.get('payment_note', '')),
+                    'transaction_note': str(row.get('transaction_note', '')),
+                    
+                    # Order and staff details
+                    'order_type': str(row.get('order_type', '')),
+                    'staff_name': str(row.get('staff_name', '')),
+                    
+                    # Customer information
+                    'customer_name': str(row.get('customer_name', '')),
+                    'customer_phone_number': str(row.get('customer_phone_number', '')),
+                    
+                    # Transaction status
+                    'voided': str(row.get('voided', '')),
+                    'void_reason': str(row.get('void_reason', '')),
+                    
+                    # Product information
+                    'combo_name': str(row.get('combo_name', '')),
+                    'transaction_item': str(row.get('product_name', '')),  # product_name maps to transaction_item
+                    'sku_number': str(row.get('sku_number', '')),
+                    'transaction_item_quantity': str(row.get('quantity', '1')),
+                    'transaction_item_notes': str(row.get('item_notes', '')),
+                    'transaction_item_discount': str(row.get('item_discount', '0')),
+                    
+                    # Pricing information
+                    'amount_before_subsidy': str(row.get('amount_before_subsidy', '0')),
+                    'total_subsidy': str(row.get('total_subsidy', '0')),
+                    'transaction_item_final_amount': str(row.get('transaction_final_amount', '0')),
+                    
+                    # Store information
+                    'store_name': str(row.get('store_name', '')),
+                    
+                    # System fields
+                    'update_time': str(row.get('update_time', ''))
                 }
-                records.append(record)
+                bulk_records.append(bulk_record)
             
             # SAFETY CHECK: Only proceed with truncation if we have valid records to insert
-            if not records:
+            if not bulk_records:
                 logger.warning("❌ No valid records to insert - skipping truncation to prevent data loss")
                 return 0
             
-            logger.info(f"✅ Prepared {len(records)} valid records - safe to proceed with truncation")
+            logger.info(f"✅ Prepared {len(bulk_records)} valid records - safe to proceed with truncation")
             
             # Step 3: Now it's safe to truncate existing staging data 
             logger.info(f"Truncating existing staging data for date range...")
@@ -162,33 +213,7 @@ class SupabaseClient:
             logger.info(f"Deleted {deleted_final_count} existing final sales records")
             
             # Step 5: TRUE BULK INSERT - insert all records in single operation
-            logger.info(f"Bulk inserting {len(records)} fresh records to staging table...")
-            
-            # Convert to format for direct table insert (no RPC needed)
-            bulk_records = []
-            for record in records:
-                bulk_record = {
-                    'import_batch_id': record['p_batch_id'],
-                    'date': record['p_date'],
-                    'receipt_number': record['p_receipt_number'],
-                    'payment_method': record['p_payment_method'],
-                    'payment_details': record['p_payment_details'],
-                    'customer_name': record['p_customer_name'],
-                    'customer_phone_number': record['p_customer_phone_number'],
-                    'product_name': record['p_product_name'],
-                    'tab': record['p_tab'],
-                    'category': record['p_category'],
-                    'quantity': record['p_quantity'],
-                    'unit_price': record['p_unit_price'],
-                    'total_price': record['p_total_price'],
-                    'gross_amount': record['p_gross_amount'],
-                    'discount_amount': record['p_discount_amount'],
-                    'net_sales_amount': record['p_net_sales_amount'],
-                    'tax_amount': record['p_tax_amount'],
-                    'total_amount': record['p_total_amount'],
-                    'update_time': record['p_update_time']
-                }
-                bulk_records.append(bulk_record)
+            logger.info(f"Bulk inserting {len(bulk_records)} fresh records to staging table...")
             
             # Single bulk insert operation
             try:
@@ -226,8 +251,8 @@ class SupabaseClient:
     def process_staging_to_final(self, batch_id: str) -> int:
         """Process staging data using Supabase function - no conflicts since we truncated first"""
         try:
-            # Call the database function to process the batch
-            result = self.supabase.rpc('process_staging_batch', {
+            # Call the new database function to process the batch
+            result = self.supabase.rpc('process_staging_batch_v2', {
                 'batch_id_param': batch_id
             }).execute()
             

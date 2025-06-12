@@ -124,8 +124,15 @@ class SalesService:
         logger.info(f"Will process {estimates['monthly_chunks']} monthly chunks ({estimates['total_days']} days total)")
         logger.info(f"Estimated time: ~{estimates['estimated_time_minutes']} minutes")
         
-        # Create sync log for historical sync
-        batch_id = self.supabase_client.create_sync_log('historical_sync')
+        # Create sync log for historical sync with metadata
+        metadata = {
+            'start_date': str(validated_start),
+            'end_date': str(validated_end),
+            'total_days': estimates['total_days'],
+            'monthly_chunks': estimates['monthly_chunks'],
+            'estimated_time_minutes': estimates['estimated_time_minutes']
+        }
+        batch_id = self.supabase_client.create_sync_log('historical_sync', metadata)
         
         # Process month by month
         monthly_chunks = split_date_range_by_month(validated_start, validated_end)

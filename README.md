@@ -1,297 +1,485 @@
-# Lengolf Sales Sync API
+# Lengolf Sales Data Integration System
 
-> A robust microservice for synchronizing sales data from Qashier POS to Supabase with automated daily operations
+> **Enterprise-grade microservice for automated POS data synchronization from Qashier to Supabase with comprehensive sales analytics**
 
-## 🚀 Live Deployment
+## 🎯 Overview
 
-**Production API**: `https://lengolf-sales-api-1071951248692.asia-southeast1.run.app`
+The Lengolf Sales Data Integration System is a robust, production-ready solution that automatically extracts, transforms, and loads (ETL) sales data from the Qashier Point-of-Sale system into a Supabase PostgreSQL database. The system provides real-time daily synchronization and historical data backfill capabilities with comprehensive error handling, monitoring, and data validation.
 
-## 📋 API Endpoints
+## 🏗️ System Architecture
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Health check for monitoring |
-| `GET` | `/info` | Service information and API documentation |
-| `POST` | `/sync/daily` | Trigger daily data synchronization |
-| `POST` | `/sync/historical` | Trigger historical sync for date range |
-| `POST` | `/sync/estimates` | Get sync estimates for date range |
-
-## 🏗️ Architecture
-
-Clean, modular design focused on reliable data synchronization:
+### Core Components
 
 ```
-app/
-├── config.py              # Configuration management
-├── utils.py               # Date utilities and validation
-├── supabase_client.py     # Database operations with comprehensive functions
-├── qashier_scraper.py     # Web scraping with date format fixes
-├── services.py            # Business logic and data processing
-├── app.py                 # Flask API service
-└── requirements.txt       # Production dependencies
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Qashier POS   │───▶│  Flask API       │───▶│   Supabase      │
+│   (Source)      │    │  Microservice    │    │   Database      │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                              │
+                              ▼
+                       ┌──────────────────┐
+                       │   Playwright     │
+                       │   Web Scraper    │
+                       └──────────────────┘
 ```
 
-## 🔧 Setup
+### Data Flow Pipeline
 
-### Prerequisites
-- Python 3.11+
-- Supabase project with proper schema
-- Qashier POS credentials
+```
+Qashier POS → Playwright Automation → Excel Download → 
+CSV Processing → Data Validation → Staging Table → 
+Business Logic Processing → Final Sales Table → Analytics Views
+```
+
+## 📊 Database Schema
+
+### Core Tables Overview
+
+| Table | Purpose | Records | Schema |
+|-------|---------|---------|--------|
+| `pos.lengolf_sales_staging` | Raw CSV data ingestion | ~13K+ | `pos` |
+| `pos.lengolf_sales` | Processed sales transactions | ~62K+ | `pos` |
+| `pos.dim_product` | Product catalog dimension | ~183 | `pos` |
+| `pos.sales_sync_logs` | ETL process monitoring | ~194 | `pos` |
+
+### Staging Table Schema
+
+The staging table captures **ALL** CSV columns from Qashier Transaction Details:
+
+```sql
+-- Core transaction identifiers
+date                    TEXT,    -- Transaction date/time
+receipt_number          TEXT,    -- Receipt identifier  
+order_number           TEXT,    -- Order identifier
+invoice_no             TEXT,    -- Invoice number
+
+-- Payment information
+invoice_payment_type            TEXT,    -- Payment method at invoice level
+total_invoice_amount           TEXT,    -- Total invoice amount
+transaction_total_amount       TEXT,    -- Transaction total
+transaction_level_percentage_discount TEXT, -- % discount
+transaction_level_dollar_discount     TEXT, -- $ discount  
+transaction_total_vat          TEXT,    -- VAT amount
+transaction_payment_method     TEXT,    -- Payment method
+payment_note                   TEXT,    -- Payment notes
+transaction_note               TEXT,    -- Transaction notes
+
+-- Order and staff details
+order_type                     TEXT,    -- Order type (dine-in, takeaway, etc.)
+staff_name                     TEXT,    -- Staff member name
+
+-- Customer information  
+customer_name                  TEXT,    -- Customer name
+customer_phone_number          TEXT,    -- Customer phone
+
+-- Transaction status
+voided                         TEXT,    -- Void status
+void_reason                    TEXT,    -- Void reason
+
+-- Product information
+combo_name                     TEXT,    -- Combo name if applicable
+transaction_item               TEXT,    -- Product/service name
+sku_number                     TEXT,    -- SKU identifier
+transaction_item_quantity      TEXT,    -- Quantity
+transaction_item_notes         TEXT,    -- Item notes
+transaction_item_discount      TEXT,    -- Item discount
+
+-- Pricing information
+amount_before_subsidy          TEXT,    -- Amount before subsidy
+total_subsidy                  TEXT,    -- Subsidy amount
+transaction_item_final_amount  TEXT,    -- Final amount
+
+-- Store information  
+store_name                     TEXT,    -- Store name
+
+-- System fields
+update_time                    TEXT,    -- Update timestamp
+import_batch_id                TEXT     -- Batch tracking ID
+```
+
+### Final Sales Table Schema
+
+Processed and normalized transaction data:
+
+```sql
+CREATE TABLE pos.lengolf_sales (
+    id                      SERIAL PRIMARY KEY,
+    date                    DATE NOT NULL,
+    receipt_number          TEXT NOT NULL,
+    payment_method          TEXT,
+    payment_details         TEXT,
+    customer_name           TEXT,
+    customer_phone_number   TEXT,
+    product_name            TEXT,
+    tab                     TEXT,
+    category                TEXT,
+    parent_category         TEXT,
+    quantity                INTEGER,
+    unit_price              NUMERIC,
+    total_price             NUMERIC,
+    is_sim_usage            BOOLEAN DEFAULT FALSE,
+    gross_amount            NUMERIC,
+    discount_amount         NUMERIC,
+    net_sales_amount        NUMERIC,
+    tax_amount              NUMERIC,
+    total_amount            NUMERIC,
+    gross_profit            NUMERIC,
+    sales_timestamp         TIMESTAMPTZ NOT NULL,
+    created_at              TIMESTAMPTZ DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ DEFAULT NOW(),
+    update_time             TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### Product Dimension Table
+
+```sql
+CREATE TABLE pos.dim_product (
+    id              SERIAL PRIMARY KEY,
+    product_name    TEXT NOT NULL UNIQUE,
+    tab             TEXT,
+    category        TEXT,
+    parent_category TEXT,
+    barcode         TEXT,
+    sku_number      TEXT,
+    unit_price      NUMERIC,
+    unit_cost       NUMERIC,
+    is_sim_usage    BOOLEAN DEFAULT FALSE,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+## 🔄 Data Processing Workflow
+
+### 1. Data Extraction
+- **Source**: Qashier POS Transaction Details
+- **Method**: Playwright web automation
+- **Format**: Excel (.xlsx) → CSV conversion
+- **Authentication**: Base64 encoded credentials
+
+### 2. Data Transformation
+- **Date Standardization**: DD/MM/YYYY HH:MM:SS → YYYY-MM-DD HH:MM:SS
+- **Field Mapping**: 30+ CSV columns mapped to staging table
+- **Data Validation**: Type checking, null handling, format validation
+- **Duplicate Detection**: Receipt-based deduplication
+
+### 3. Data Loading
+- **Staging**: Raw CSV data loaded into `lengolf_sales_staging`
+- **Processing**: Database function `process_staging_batch_v2()` transforms data
+- **Final Storage**: Processed data in `lengolf_sales` table
+- **Product Catalog**: Automatic product dimension updates
+
+### 4. Data Quality Assurance
+- **Truncate & Replace**: Prevents duplicates by date range replacement
+- **Batch Tracking**: UUID-based batch identification
+- **Error Logging**: Comprehensive error capture and reporting
+- **Data Validation**: Multi-level validation checks
+
+## 🚀 API Endpoints
+
+### Core Endpoints
+
+| Method | Endpoint | Description | Use Case |
+|--------|----------|-------------|----------|
+| `GET` | `/health` | Health monitoring | System status checks |
+| `GET` | `/info` | Service information | API documentation |
+| `POST` | `/sync/daily` | Daily synchronization | Automated daily runs |
+| `POST` | `/sync/historical` | Historical data sync | Backfill missing data |
+| `POST` | `/sync/estimates` | Sync estimation | Planning historical syncs |
+
+### Daily Sync Endpoint
+
+```bash
+curl -X POST https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/sync/daily \
+  -H "Content-Length: 0"
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Successfully processed 487 records",
+  "batch_id": "uuid-string",
+  "records_scraped": 487,
+  "records_inserted": 487,
+  "records_processed": 487
+}
+```
+
+### Historical Sync Endpoint
+
+```bash
+curl -X POST https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/sync/historical \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_date": "2024-03-01",
+    "end_date": "2024-03-31"
+  }'
+```
+
+**Features:**
+- Automatic monthly chunking for large date ranges
+- Progress tracking per chunk
+- Error handling with partial success
+- Comprehensive logging and monitoring
+
+## ⚙️ Configuration & Setup
 
 ### Environment Variables
+
 ```bash
-export SUPABASE_URL="your-supabase-url"
-export SUPABASE_SERVICE_KEY="your-service-key"
-export QASHIER_USERNAME="base64-encoded-username"
-export QASHIER_PASSWORD="base64-encoded-password"
+# Supabase Configuration
+SUPABASE_URL="https://your-project.supabase.co"
+SUPABASE_SERVICE_KEY="your-service-role-key"
+
+# Qashier POS Credentials (Base64 encoded)
+QASHIER_USERNAME="base64-encoded-username"
+QASHIER_PASSWORD="base64-encoded-password"
+
+# Application Configuration
+PORT=8080
+HOST=0.0.0.0
+DEBUG=false
+LOG_LEVEL=INFO
+PYTHONPATH=/app
 ```
 
-### Install Dependencies
+### Local Development Setup
+
 ```bash
+# 1. Clone repository
+git clone https://github.com/your-org/lengolf-sales.git
+cd lengolf-sales
+
+# 2. Install dependencies
 cd app
 pip install -r requirements.txt
 python -m playwright install chromium
-```
 
-## 💻 Usage
+# 3. Configure environment variables
+cp .env.example .env
+# Edit .env with your credentials
 
-### API Calls
-```bash
-# Check health
-curl https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/health
-
-# Get service info
-curl https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/info
-
-# Trigger daily sync (recommended for automation)
-curl -X http://127.0.0.1:8080/sync/daily \
-  -H "Content-Length: 0"
-
-# Trigger historical sync for specific date range
-curl -X POST https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/sync/historical \
-  -H "Content-Type: application/json" \
-  -d '{"start_date": "2024-03-01", "end_date": "2024-03-31"}'
-
-# Get sync estimates before running historical sync
-curl -X POST https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/sync/estimates \
-  -H "Content-Type: application/json" \
-  -d '{"start_date": "2024-03-01", "end_date": "2024-12-31"}'
-```
-
-### Local Development
-```bash
-cd app
+# 4. Run locally
 python app.py
 ```
 
-## 🏛️ Database Architecture
+### Production Deployment
 
-### Data Flow
-```
-Qashier POS → Playwright Scraper → Excel Download → 
-CSV Processing (with ISO date conversion) → Supabase Staging → 
-Data Processing → Final Sales Table → Transformed View
+```bash
+# Deploy to Google Cloud Run
+./deploy.sh your-project-id asia-southeast1
 ```
 
-### Key Tables
-- **`pos.lengolf_sales_staging`** - Raw data from Qashier (13,400+ records)
-- **`pos.lengolf_sales`** - Processed final data (13,400+ records after cleanup)
-- **`pos.dim_product`** - Product catalog with duplicate prevention
-- **`pos.v_lengolf_sales_transformed`** - Analytics-ready view
+**Cloud Run Configuration:**
+- **Memory**: 2GB
+- **CPU**: 1 vCPU
+- **Timeout**: 600 seconds (10 minutes)
+- **Concurrency**: 10 requests
+- **Auto-scaling**: 0-5 instances
+- **Region**: Asia Southeast 1 (Singapore)
 
-### Data Quality Features
-- ✅ **Date Format Consistency** - All dates converted to ISO format (YYYY-MM-DD)
-- ✅ **Duplicate Prevention** - Unique constraints on product and sales data
-- ✅ **Data Validation** - Comprehensive validation and error handling
-- ✅ **Automated Refresh** - Hourly automated data refresh via Supabase Cron
+## 📅 Scheduling & Automation
 
-## 🤖 Automation
-
-### Supabase Cron Integration
-The system includes automated hourly data refresh:
+### Option 1: Supabase Cron (Recommended)
 
 ```sql
--- Automated refresh function
-SELECT automated_sales_refresh();
+-- Create automated daily sync function
+CREATE OR REPLACE FUNCTION automated_daily_sync()
+RETURNS void AS $$
+BEGIN
+    -- Call API endpoint using http extension
+    PERFORM net.http_post(
+        url := 'https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/sync/daily',
+        headers := '{"Content-Type": "application/json"}'::jsonb,
+        body := '{}'::jsonb
+    );
+END;
+$$ LANGUAGE plpgsql;
 
--- Cron schedule (runs every hour)
-SELECT cron.schedule('hourly-sales-refresh', '0 * * * *', 'SELECT automated_sales_refresh();');
+-- Schedule daily at 11:30 PM Bangkok time
+SELECT cron.schedule(
+    'daily-sales-sync',
+    '30 16 * * *',  -- 11:30 PM Bangkok = 4:30 PM UTC
+    'SELECT automated_daily_sync();'
+);
 ```
 
-### Cloud Scheduler (Alternative)
+### Option 2: Google Cloud Scheduler
+
 ```bash
 gcloud scheduler jobs create http daily-sales-sync \
-  --schedule="0 23 * * *" \
+  --schedule="30 16 * * *" \
   --uri="https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/sync/daily" \
   --http-method=POST \
   --headers="Content-Length=0" \
-  --time-zone="Asia/Bangkok"
+  --time-zone="Asia/Bangkok" \
+  --description="Daily Lengolf sales data synchronization"
 ```
 
-## 📦 Key Dependencies
+### Option 3: GitHub Actions
 
-Production-optimized dependency list:
+```yaml
+name: Daily Sales Sync
+on:
+  schedule:
+    - cron: '30 16 * * *'  # 11:30 PM Bangkok time
+  workflow_dispatch:
 
-- **flask** - Web framework
-- **gunicorn** - Production WSGI server
-- **pandas** - Data processing
-- **playwright** - Web scraping automation
-- **supabase** - Database client
-- **openpyxl** - Excel file processing
-- **python-dateutil** - Date manipulation and validation
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger daily sync
+        run: |
+          curl -X POST \
+            -H "Content-Length: 0" \
+            ${{ secrets.API_ENDPOINT }}/sync/daily
+```
 
-## 🚢 Deployment
+## 📈 Monitoring & Analytics
 
-### Docker Configuration
+### Sync Logs Monitoring
+
+```sql
+-- View recent sync operations
+SELECT 
+    batch_id,
+    process_type,
+    status,
+    records_processed,
+    start_time,
+    end_time,
+    EXTRACT(EPOCH FROM (end_time - start_time)) as duration_seconds,
+    error_message
+FROM pos.sales_sync_logs 
+ORDER BY start_time DESC 
+LIMIT 10;
+```
+
+### Data Coverage Analysis
+
+```sql
+-- Check data coverage by month
+SELECT 
+    DATE_TRUNC('month', date) as month,
+    COUNT(*) as total_transactions,
+    SUM(total_amount) as total_revenue,
+    COUNT(DISTINCT receipt_number) as unique_receipts,
+    COUNT(DISTINCT customer_name) as unique_customers
+FROM pos.lengolf_sales 
+GROUP BY DATE_TRUNC('month', date)
+ORDER BY month DESC;
+```
+
+### Performance Metrics
+
+```sql
+-- Sync performance metrics
+SELECT 
+    process_type,
+    AVG(records_processed) as avg_records,
+    AVG(EXTRACT(EPOCH FROM (end_time - start_time))) as avg_duration_seconds,
+    COUNT(*) as total_syncs,
+    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as successful_syncs
+FROM pos.sales_sync_logs 
+WHERE start_time >= NOW() - INTERVAL '30 days'
+GROUP BY process_type;
+```
+
+## 🛠️ Advanced Features
+
+### Historical Data Backfill
+
+The system supports comprehensive historical data synchronization:
+
 ```bash
-# Build and deploy to Google Cloud Run
-./deploy.sh lengolf-forms asia-southeast1
+# Estimate sync requirements
+curl -X POST https://your-api/sync/estimates \
+  -H "Content-Type: application/json" \
+  -d '{"start_date": "2024-03-01", "end_date": "2025-01-31"}'
+
+# Response includes:
+# - Total days to sync
+# - Monthly chunks created  
+# - Estimated processing time
+# - Validation warnings
 ```
 
-### Production Features
-- ✅ **Containerized Deployment** - Docker with optimized multi-stage builds
-- ✅ **Auto-scaling** - Cloud Run with 0-5 instance scaling
-- ✅ **Health Monitoring** - Comprehensive health checks
-- ✅ **Structured Logging** - JSON-formatted logs for monitoring
-- ✅ **Environment Configuration** - Secure secret management
-- ✅ **Performance Optimization** - Gunicorn with optimized worker configuration
+### Data Validation & Quality
 
-### Cloud Run Configuration
-- **Memory**: 2GB
-- **CPU**: 1 vCPU  
-- **Timeout**: 300 seconds
-- **Concurrency**: 10 requests
-- **Port**: 8080 (configurable via PORT env var)
+- **Date Range Validation**: Automatic validation against valid ranges
+- **Monthly Chunking**: Large ranges split automatically (max 12 months)
+- **Duplicate Prevention**: Receipt-based duplicate detection
+- **Error Recovery**: Partial success handling for historical syncs
+- **Data Integrity**: Comprehensive validation at multiple stages
 
-## 🔍 Monitoring & Observability
+### Extensibility
 
-- **Health Endpoint**: Real-time service health monitoring
-- **Structured Logging**: JSON logs with batch tracking UUIDs
-- **Error Handling**: Comprehensive error tracking and reporting
-- **Performance Metrics**: Request timing and resource usage tracking
+- **Modular Design**: Clean separation of concerns
+- **Configuration Driven**: Environment-based configuration
+- **Error Handling**: Comprehensive error capture and reporting
+- **Logging**: Structured logging with batch tracking
+- **Monitoring**: Built-in health checks and metrics
 
-## 🔒 Security
-
-- **Environment Variables** - All secrets managed via environment variables
-- **Non-root Execution** - Container runs with non-privileged user
-- **Input Validation** - Comprehensive request validation and sanitization
-- **Base64 Encoding** - Secure credential encoding
-- **No Hardcoded Secrets** - Zero secrets in codebase
-
-## 🐛 Troubleshooting
+## 🔧 Troubleshooting
 
 ### Common Issues
 
-**Date Format Errors**
-- ✅ **Fixed**: All dates now converted to ISO format before database insertion
-- ✅ **Prevention**: Automatic date validation and conversion
-
-**Product Duplicates**
-- ✅ **Fixed**: Unique constraints added to prevent duplicate products
-- ✅ **Cleanup**: Database cleanup functions available
-
-**Performance Issues**
-- ✅ **Optimized**: Monthly chunking for large date ranges (max 12 months)
-- ✅ **Monitoring**: Sync estimates available before processing
-
-**Bot Detection / Login Timeout Issues**
-- ✅ **Fixed**: Simplified browser launch and login approach to bypass detection
-- ✅ **Root Cause**: Complex anti-bot arguments were ironically triggering detection
-- ✅ **Solution**: Adopted working app's simple approach with redirect URLs
-
-### Bot Detection Fix Details
-
-**Problem**: The scraper was failing with timeout errors during login:
-```
-Locator.fill: Timeout 30000ms exceeded.
-Call log:
-waiting for get_by_label("Username")
-```
-
-**Solution Applied**:
-1. **Simplified Browser Launch**: Changed from complex stealth arguments to simple `browser.launch(headless=True)`
-2. **Working User Agent**: Switched to the proven user agent from the working app
-3. **Direct Redirect URL**: Use `https://hq.qashier.com/#/login?redirect=/transactions` instead of separate navigation
-4. **Streamlined Login**: Removed fallback logic that made behavior patterns detectable
-
-**Key Insight**: Less is more - the "stealthy" approach with many anti-detection arguments was more suspicious than a simple, direct approach.
-
-**Before (Failed)**:
-```python
-# Too many suspicious arguments
-browser = p.chromium.launch(
-    headless=True,
-    args=[
-        '--disable-blink-features=AutomationControlled',
-        '--disable-features=VizDisplayCompositor',
-        # ... many more args that triggered detection
-    ]
-)
-```
-
-**After (Working)**:
-```python
-# Simple and clean
-browser = p.chromium.launch(headless=True)
-context = browser.new_context(
-    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
-    accept_downloads=True
-)
-```
-
-### Debug Mode
+**1. Authentication Errors**
 ```bash
-export DEBUG=true
-export LOG_LEVEL=DEBUG
-python app.py
+# Verify base64 encoded credentials
+echo "aW5mb0BsZW4uZ29sZg==" | base64 -d  # Should output username
 ```
 
-## 📊 Recent Improvements
+**2. Date Format Issues**
+```sql
+-- Check for invalid dates in staging
+SELECT date, COUNT(*) 
+FROM pos.lengolf_sales_staging 
+WHERE date !~ '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$'
+GROUP BY date;
+```
 
-### Version 2.0.0 Features
-- ✅ **Date Consistency Fix** - Resolved PostgreSQL date format conflicts
-- ✅ **Duplicate Prevention** - Added unique constraints and cleanup functions
-- ✅ **Automated Refresh** - Hourly Supabase Cron integration
-- ✅ **API Modernization** - RESTful endpoints with proper error handling
-- ✅ **Production Deployment** - Stable Google Cloud Run deployment
-- ✅ **Data Quality** - Comprehensive validation and error handling
-- ✅ **Bot Detection Fix** - Resolved login timeout issues with simplified browser approach
+**3. Missing Data**
+```sql
+-- Find missing date ranges
+WITH date_series AS (
+  SELECT generate_series('2024-03-01'::date, CURRENT_DATE, '1 day'::interval)::date AS expected_date
+),
+existing_dates AS (
+  SELECT DISTINCT date FROM pos.lengolf_sales
+)
+SELECT ds.expected_date as missing_date
+FROM date_series ds
+LEFT JOIN existing_dates ed ON ds.expected_date = ed.date
+WHERE ed.date IS NULL
+ORDER BY missing_date;
+```
 
-### Performance Metrics
-- **Daily Sync**: ~300-400 records processed in seconds
-- **Historical Sync**: Up to 12 months with monthly chunking
-- **Data Refresh**: 13,400+ records refreshed hourly
-- **Uptime**: 99.9% availability on Cloud Run
+### Performance Optimization
 
-## 💡 Best Practices
+**Database Indexes:**
+```sql
+-- Recommended indexes for performance
+CREATE INDEX idx_lengolf_sales_date ON pos.lengolf_sales(date);
+CREATE INDEX idx_lengolf_sales_receipt ON pos.lengolf_sales(receipt_number);
+CREATE INDEX idx_lengolf_sales_customer ON pos.lengolf_sales(customer_name);
+CREATE INDEX idx_sync_logs_batch_id ON pos.sales_sync_logs(batch_id);
+```
 
-### For Daily Operations
-- Use `/sync/daily` endpoint for regular operations
-- Monitor via `/health` endpoint
-- Check logs for any processing issues
+## 📄 License
 
-### For Historical Sync
-- Use `/sync/estimates` first for large date ranges
-- Limit to 12 months maximum per request
-- Process in monthly chunks for better reliability
+This project is proprietary software developed for Lengolf operations.
 
-### For Monitoring
-- Set up alerting on health endpoint failures
-- Monitor Cloud Run metrics and logs
-- Use structured logging for debugging
+## 🤝 Support
 
-## 🤝 Contributing
-
-1. Follow the modular architecture pattern
-2. Add comprehensive error handling and logging
-3. Include input validation for all endpoints
-4. Test both local and production deployments
-5. Update documentation for any new features
-
-## 📜 License
-
-This project is for internal use at Lengolf.
+For technical support or feature requests, contact the development team or submit an issue through the project repository.
 
 ---
 
-**Built with ❤️ for reliable, automated sales data synchronization**
+**Production URL**: https://lengolf-sales-api-1071951248692.asia-southeast1.run.app
+
+**Last Updated**: June 2025  
+**Version**: 2.0.0

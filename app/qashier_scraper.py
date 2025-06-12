@@ -402,14 +402,36 @@ class QashierPOSScraper:
 
         logger.info("Transaction details clicked")
         
-        # Download and process the file
-        with page.expect_download() as download_info:
-            page.get_by_role("button", name="CONFIRM").click()
-            download = download_info.value
-        
-        # Process downloaded file
-        sales_data = self._process_downloaded_file(download, date_for_logging)
-        return sales_data
+        # Download and process the file with extended timeout
+        logger.info("Initiating file download... This may take up to 2 minutes for large datasets.")
+        try:
+            with page.expect_download(timeout=120000) as download_info:  # 2 minutes timeout instead of 30 seconds
+                page.get_by_role("button", name="CONFIRM").click()
+                logger.info("CONFIRM button clicked, waiting for download to start...")
+                download = download_info.value
+            
+            logger.info(f"✅ Download completed successfully: {download.suggested_filename}")
+            
+            # Process downloaded file
+            sales_data = self._process_downloaded_file(download, date_for_logging)
+            logger.info(f"✅ Processed {len(sales_data)} records from downloaded file")
+            return sales_data
+            
+        except Exception as e:
+            logger.error(f"❌ Download failed after 2 minutes: {e}")
+            logger.error("This could mean:")
+            logger.error("  1. No data available for this date range")
+            logger.error("  2. Network issues or slow server response")
+            logger.error("  3. Qashier interface changed")
+            
+            # Take screenshot for debugging
+            try:
+                page.screenshot(path=f"screenshots/DownloadError_{date_for_logging}.png")
+                logger.info(f"Screenshot saved for debugging: DownloadError_{date_for_logging}.png")
+            except:
+                pass
+                
+            return []
 
     def _process_downloaded_file(self, download, date: str) -> List[Dict]:
         """Process the downloaded Excel file and convert to sales data"""
@@ -445,6 +467,7 @@ class QashierPOSScraper:
                     'receipt_number': str(row.get('Receipt No.', '')),
                     'order_number': str(row.get('Order Number', '')),
                     'invoice_no': str(row.get('Invoice No.', '')),
+                    'invoice_payment_type': str(row.get('Invoice Payment Type', '')),  # Added missing column
                     'payment_method': str(row.get('Transaction Payment Method', '')),
                     'payment_note': str(row.get('Payment Note', '')),
                     'transaction_note': str(row.get('Transaction Note', '')),
