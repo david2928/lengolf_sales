@@ -214,7 +214,7 @@ curl -X POST https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/syn
   -H "Content-Type: application/json" \
   -d '{
     "start_date": "2024-03-01",
-    "end_date": "2024-03-31"
+    "end_date": "2025-02-28"
   }'
 ```
 
@@ -280,62 +280,76 @@ python app.py
 - **Auto-scaling**: 0-5 instances
 - **Region**: Asia Southeast 1 (Singapore)
 
-## 📅 Scheduling & Automation
+## 📅 Current Automation Setup
 
-### Option 1: Supabase Cron (Recommended)
+The system uses **Supabase Cron** for automated data synchronization with a **dual-stage approach**:
 
+### Active Cron Jobs
+
+#### 1. Hourly API Sync (Primary Data Collection)
 ```sql
--- Create automated daily sync function
-CREATE OR REPLACE FUNCTION automated_daily_sync()
-RETURNS void AS $$
-BEGIN
-    -- Call API endpoint using http extension
-    PERFORM net.http_post(
-        url := 'https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/sync/daily',
-        headers := '{"Content-Type": "application/json"}'::jsonb,
-        body := '{}'::jsonb
-    );
-END;
-$$ LANGUAGE plpgsql;
-
--- Schedule daily at 11:30 PM Bangkok time
-SELECT cron.schedule(
-    'daily-sales-sync',
-    '30 16 * * *',  -- 11:30 PM Bangkok = 4:30 PM UTC
-    'SELECT automated_daily_sync();'
+-- Job: hourly-sales-sync
+-- Schedule: Every hour at minute 0 (0 * * * *)
+-- Calls the Flask API to scrape fresh data from Qashier
+SELECT net.http_post(
+    url := 'https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/sync/daily',
+    headers := jsonb_build_object('Content-Type', 'application/json'),
+    body := '{}'::jsonb,
+    timeout_milliseconds := 300000  -- 5 minute timeout
 );
 ```
 
-### Option 2: Google Cloud Scheduler
-
-```bash
-gcloud scheduler jobs create http daily-sales-sync \
-  --schedule="30 16 * * *" \
-  --uri="https://lengolf-sales-api-1071951248692.asia-southeast1.run.app/sync/daily" \
-  --http-method=POST \
-  --headers="Content-Length=0" \
-  --time-zone="Asia/Bangkok" \
-  --description="Daily Lengolf sales data synchronization"
+#### 2. Hourly ETL Processing (Data Transformation)
+```sql
+-- Job: hourly-sales-etl  
+-- Schedule: Every hour at minute 10 (10 * * * *)
+-- Processes staging data into final sales table
+SELECT pos.complete_sales_sync();
 ```
 
-### Option 3: GitHub Actions
+### How It Works
 
-```yaml
-name: Daily Sales Sync
-on:
-  schedule:
-    - cron: '30 16 * * *'  # 11:30 PM Bangkok time
-  workflow_dispatch:
+```
+Every Hour:
+:00 - API scrapes latest data from Qashier → staging table
+:10 - ETL processes staging data → final sales table
+```
 
-jobs:
-  sync:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger daily sync
-        run: |
-          curl -X POST \
-            -H "Content-Length: 0" \
-            ${{ secrets.API_ENDPOINT }}/sync/daily
+**Benefits of This Approach:**
+- **Data Freshness**: Never more than 1 hour behind
+- **Reliability**: Staging table acts as buffer against API failures
+- **Performance**: ETL processing separated from external API calls
+- **Monitoring**: Two separate jobs allow granular failure detection
+
+### Complete ETL Function
+
+The `pos.complete_sales_sync()` function performs:
+
+```sql
+-- Returns comprehensive sync statistics
+{
+  "success": true,
+  "timestamp": "2025-01-15T10:10:00Z",
+  "records_processed": 487,
+  "records_inserted": 450, 
+  "records_updated": 37,
+  "latest_sales_timestamp": "2025-01-15T09:45:00Z",
+  "latest_sales_timestamp_bkk": "2025-01-15T16:45:00+07"
+}
+```
+
+### Monitoring Active Jobs
+
+```sql
+-- View all active cron jobs
+SELECT 
+    jobname,
+    schedule,
+    active,
+    command
+FROM cron.job 
+WHERE active = true
+ORDER BY jobname;
 ```
 
 ## 📈 Monitoring & Analytics

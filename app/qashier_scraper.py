@@ -184,9 +184,24 @@ class QashierPOSScraper:
             page.get_by_role("button", name="Login").click()
         logger.info("Pressed LOGIN and navigated.")
 
-        # Wait for data to load (like working app)
-        logger.info("Waiting for 10 seconds to allow data to load.")
-        page.wait_for_timeout(10000)
+        # Wait for the transactions page to be ready by checking for key elements
+        logger.info("Waiting for transactions page to be ready...")
+        try:
+            # Wait for key elements that indicate the page is ready
+            page.wait_for_selector('button:has-text("Export")', timeout=15000)
+            logger.info("✅ Export button found - page is ready")
+        except Exception as e:
+            logger.warning(f"Export button not found, trying alternative wait: {e}")
+            # Fallback: wait for any date picker button (current day)
+            try:
+                current_date = get_current_time()
+                current_day_text = current_date.strftime('%A %d/%m/')
+                page.wait_for_selector(f'button:has-text("{current_day_text}")', timeout=10000)
+                logger.info("✅ Date picker found - page is ready")
+            except Exception as e2:
+                logger.warning(f"Date picker not found either, using minimal wait: {e2}")
+                # Final fallback: minimal wait
+                page.wait_for_timeout(3000)
 
         logger.info("Login completed successfully")
 
@@ -267,10 +282,10 @@ class QashierPOSScraper:
         """
         Select historical date range by navigating the calendar interface
         
-        This handles the complex navigation logic for historical dates:
-        1. Start from current date (today)
-        2. Navigate to target year/month
-        3. Select start and end dates
+        This handles the complex navigation logic for historical dates using the correct selectors
+        based on the working codegen pattern:
+        - page.locator("button").filter(has_text="chevron_left").nth(2).click()  # Year navigation
+        - page.locator("button").filter(has_text="chevron_left").nth(1).click()  # Month navigation
         """
         current_date = get_current_time().date()
         
@@ -294,18 +309,18 @@ class QashierPOSScraper:
         logger.info(f"Clicking current date picker: {current_display['day_text']}")
         page.get_by_role("button", name=current_display['day_text']).click()
         
-        # Navigate to target year first if needed
+        # Navigate to target year first if needed (using nth(2) selector)
         if nav_info['year_diff'] != 0:
             logger.info(f"Navigating {abs(nav_info['year_diff'])} year(s) {'left' if nav_info['year_diff'] < 0 else 'right'}")
             for _ in range(abs(nav_info['year_diff'])):
                 if nav_info['year_diff'] < 0:  # Going back in time
-                    page.locator("button").filter(has_text="chevron_left").nth(1).click()
+                    page.locator("button").filter(has_text="chevron_left").nth(2).click()
                 else:  # Going forward in time
-                    page.locator("button").filter(has_text="chevron_right").nth(1).click()
+                    page.locator("button").filter(has_text="chevron_right").nth(2).click()
                 page.wait_for_timeout(500)  # Small delay between clicks
         
-        # Navigate to target month (after year navigation)
-        # After year navigation, we need to calculate remaining month difference
+        # Navigate to target month (using nth(1) selector)
+        # Calculate month navigation after year navigation
         if nav_info['year_diff'] != 0:
             # After year navigation, calculate the remaining month difference
             remaining_months = start_date.month - current_date.month
@@ -316,9 +331,9 @@ class QashierPOSScraper:
             logger.info(f"Navigating {abs(remaining_months)} month(s) {'left' if remaining_months < 0 else 'right'}")
             for _ in range(abs(remaining_months)):
                 if remaining_months < 0:  # Going back in time
-                    page.locator("button").filter(has_text="chevron_left").first.click()
+                    page.locator("button").filter(has_text="chevron_left").nth(1).click()
                 else:  # Going forward in time  
-                    page.locator("button").filter(has_text="chevron_right").first.click()
+                    page.locator("button").filter(has_text="chevron_right").nth(1).click()
                 page.wait_for_timeout(500)  # Small delay between clicks
         
         # Take screenshot after navigation
@@ -337,11 +352,12 @@ class QashierPOSScraper:
             end_nav_info = calculate_month_navigation(start_date, end_date)
             logger.info(f"Navigation needed for end date: {end_nav_info}")
             
+            # Use nth(1) for month navigation when moving to end date
             for _ in range(abs(end_nav_info['total_months'])):
                 if end_nav_info['total_months'] < 0:
-                    page.locator("button").filter(has_text="chevron_left").first.click()
+                    page.locator("button").filter(has_text="chevron_left").nth(1).click()
                 else:
-                    page.locator("button").filter(has_text="chevron_right").first.click()
+                    page.locator("button").filter(has_text="chevron_right").nth(1).click()
                 page.wait_for_timeout(500)
         
         # Select end date

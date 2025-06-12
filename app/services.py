@@ -4,6 +4,7 @@ import logging
 import traceback
 from typing import Dict, Any, List, Tuple
 from datetime import date, datetime
+import pandas as pd
 from supabase_client import SupabaseClient
 from qashier_scraper import QashierPOSScraper
 from utils import (
@@ -22,33 +23,34 @@ class SalesService:
         self.scraper = QashierPOSScraper()
     
     def sync_daily_data(self) -> Dict[str, Any]:
-        """Sync today's sales data from Qashier POS to Supabase"""
-        logger.info("Starting daily sync process...")
-        
-        # Create sync log
-        batch_id = self.supabase_client.create_sync_log('daily_sync')
-        
+        """Sync daily sales data from Qashier POS"""
         try:
-            # Scrape data from Qashier POS
+            # Create sync log entry
+            batch_id = self.supabase_client.create_sync_log('daily_sync')
+            logger.info("Starting daily sync process...")
+            
+            # Scrape data from Qashier
             logger.info("Scraping data from Qashier POS...")
             sales_df = self.scraper.scrape_daily_data()
             
             if sales_df.empty:
-                logger.warning("No sales data found for today")
+                logger.warning("No data scraped from Qashier")
                 self.supabase_client.update_sync_log(
                     batch_id, 
                     'completed', 
                     0, 
-                    metadata={'message': 'No data found'}
+                    {'message': 'No data available for today'}
                 )
                 return {
                     'success': True,
-                    'message': 'No sales data found for today',
+                    'message': 'No data available for today',
                     'batch_id': batch_id,
+                    'records_scraped': 0,
+                    'records_inserted': 0,
                     'records_processed': 0
                 }
             
-            # Insert data into staging table
+            # Load data into staging table
             logger.info(f"Loading {len(sales_df)} records into staging table...")
             records_inserted = self.supabase_client.insert_staging_data(sales_df, batch_id)
             
@@ -63,7 +65,8 @@ class SalesService:
             self.supabase_client.update_sync_log(
                 batch_id, 
                 'completed', 
-                records_processed,
+                records_processed, 
+                error_message=None,
                 metadata={
                     'records_scraped': len(sales_df),
                     'records_inserted': records_inserted,
@@ -83,24 +86,25 @@ class SalesService:
             }
             
         except Exception as e:
-            error_msg = f"Error during sync process: {str(e)}"
-            logger.error(error_msg)
+            logger.error(f"Daily sync failed: {str(e)}")
             logger.error(traceback.format_exc())
             
-            self.supabase_client.update_sync_log(
-                batch_id, 
-                'failed', 
-                0, 
-                error_message=error_msg
-            )
+            # Update sync log with error if batch_id exists
+            if 'batch_id' in locals():
+                self.supabase_client.update_sync_log(
+                    batch_id, 
+                    'failed', 
+                    0, 
+                    error_message=str(e),
+                    metadata={'error_details': str(e)}
+                )
             
             return {
                 'success': False,
-                'message': error_msg,
-                'batch_id': batch_id,
+                'message': f'Daily sync failed: {str(e)}',
                 'error': str(e)
             }
-
+    
     def sync_historical_data(self, start_date: date, end_date: date) -> Dict[str, Any]:
         """
         Sync historical sales data for a specific date range, processing month by month
